@@ -1,0 +1,11 @@
+{
+  "file_types": {
+    "OCaml": ["sail"]
+  },
+  "languages": {
+    "OCaml": {
+      "enable_language_server": false,
+      "format_on_save": "off"
+    }
+  }
+}
