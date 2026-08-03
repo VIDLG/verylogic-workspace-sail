@@ -1,6 +1,6 @@
 # 用 Sail 实现 Hack 指令集
 
-[English](README.md) · [Hack ISA 详解](isa/hack/ISA.zh-CN.md) · [Hack 包参考手册](isa/hack/README.zh-CN.md)
+[English](README.md) · [文档中心](docs/README.zh-CN.md) · [Hack 包参考手册](isa/hack/README.zh-CN.md)
 
 这是一个面向学习的、可执行的 [Hack](https://www.nand2tetris.org/) 指令集模型。项目用 [Sail](https://github.com/rems-project/sail) 描述 Hack CPU 的指令编码、ALU、寄存器、内存与控制流，再通过 Sail 的 C 后端把汇编程序编译成可运行程序。
 
@@ -115,7 +115,7 @@ D=M
 D;JEQ
 ```
 
-所以伪指令只是汇编层的便捷写法，不会扩展 Sail 中定义的 ISA。全部展开规则及其对 `A`、`D` 的影响见 [Hack ISA 详解：Hack+ 如何降级](isa/hack/ISA.zh-CN.md#hack-如何降级为正式指令)。最后一行 `.assert` 由执行链转成 Sail 检查；结果不等于 `42` 时，程序会失败。
+所以伪指令只是汇编层的便捷写法，不会扩展 Sail 中定义的 ISA。全部展开规则及其对 `A`、`D` 的影响见 [Hack ISA 详解：Hack+ 如何降级](docs/hack/ISA.zh-CN.md#hack-如何降级为正式指令)。最后一行 `.assert` 由执行链转成 Sail 检查；结果不等于 `42` 时，程序会失败。
 
 ### 3. 查看真正执行的机器码
 
@@ -341,6 +341,12 @@ Sail 官方仓库也提供编辑器支持说明，可关注后续更新：[REMS 
 ## 目录速览
 
 ```text
+docs/
+├── README.zh-CN.md           # 文档目录与学习路线
+└── hack/
+    ├── ISA.zh-CN.md          # 架构与指令语义
+    ├── ASSEMBLER.zh-CN.md    # 解析、降级与两遍汇编
+    └── EXECUTION.zh-CN.md    # Driver、C 后端、工作流与测试
 isa/hack/
 ├── hack.sail                 # Hack ISA 语义
 ├── programs/                 # 可运行的 Hack/Hack+ 汇编程序
@@ -348,11 +354,11 @@ isa/hack/
 ├── hooks/                    # 可替换的执行 Hook
 ├── tools/                    # 汇编器、执行器与工作流
 ├── programs.toml             # 示例程序清单
-└── README.zh-CN.md           # 完整包级参考手册
+└── README.zh-CN.md           # 包参考手册
 support/                      # C 后端兼容代码
 tools/install_sail.py         # 项目本地 Sail 安装器
 justfile                      # 顶层命令入口
 pixi.toml                     # 跨平台开发环境
 ```
 
-下一步建议：先运行 `multiply`，再打开 `hack.sail`，沿着 `encdec → alu → should_jump → execute` 的顺序阅读。
+下一步建议：先运行 `multiply`，然后按照[文档中心](docs/README.zh-CN.md)给出的路线继续阅读。

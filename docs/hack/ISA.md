@@ -1,8 +1,8 @@
 # The Hack Instruction Set Architecture
 
-[中文](ISA.zh-CN.md) · [Hack package reference](README.md) · [Project tutorial](../../README.md)
+[中文](ISA.zh-CN.md) · [Documentation index](../README.md) · [Assembler internals](ASSEMBLER.md) · [Execution internals](EXECUTION.md)
 
-This document focuses on the **Hack ISA itself**: the state visible to software, machine-instruction encodings, and the state transition caused by each instruction. See the [Hack package reference](README.md) for commands, hooks, assertions, and annotated `.hack` metadata.
+This document focuses on the **Hack ISA itself**: the state visible to software, machine-instruction encodings, and the state transition caused by each instruction. See the [Hack package reference](../../isa/hack/README.md) for commands, hooks, assertions, and annotated `.hack` metadata.
 
 ## What an ISA is
 
@@ -224,7 +224,7 @@ If the condition holds, this one instruction:
 3. writes the result to RAM addressed by **old `A`**;
 4. jumps to the ROM address from **old `A`**.
 
-That is why [`hack.sail`](hack.sail) begins the C-instruction path with `let old_a = A`.
+That is why [`hack.sail`](../../isa/hack/hack.sail) begins the C-instruction path with `let old_a = A`.
 
 ## From standard assembly to machine code
 
@@ -319,7 +319,7 @@ Only after this expansion does pass one compute the ROM addresses of `DONE` and 
 
 ## Mapping this ISA to Sail
 
-The structure of [`hack.sail`](hack.sail) follows this document closely:
+The structure of [`hack.sail`](../../isa/hack/hack.sail) follows this document closely:
 
 | Sail definition | ISA concept |
 | --- | --- |
@@ -346,10 +346,10 @@ Keep the Hack platform separate from the current executable model when interpret
 ## Recommended reading path
 
 1. Read the A/C encodings and execution pseudocode in this document.
-2. Open [`hack.sail`](hack.sail) and follow `encdec → alu → should_jump → execute`.
-3. Compare standard assembly and Hack+ in [`programs/basic_alu.asm`](programs/basic_alu.asm).
-4. Run `pixi run just hack asm basic_alu` and inspect `.build/basic_alu.hack`.
-5. Read [`tests/isa_conformance.sail`](tests/isa_conformance.sail) to see ISA rules turned directly into tests.
+2. Open [`hack.sail`](../../isa/hack/hack.sail) and follow `encdec → alu → should_jump → execute`.
+3. Compare standard assembly and Hack+ in [`programs/basic_alu.asm`](../../isa/hack/programs/basic_alu.asm).
+4. Run `pixi run just hack asm basic_alu` and inspect `isa/hack/.build/basic_alu.hack`.
+5. Read [`tests/isa_conformance.sail`](../../isa/hack/tests/isa_conformance.sail) to see ISA rules turned directly into tests.
 
 ## Specification sources
 

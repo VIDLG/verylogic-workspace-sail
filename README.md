@@ -1,6 +1,6 @@
 # The Hack ISA, Executed with Sail
 
-[中文教程](README.zh-CN.md) · [Hack ISA guide](isa/hack/ISA.md) · [Hack package reference](isa/hack/README.md)
+[中文教程](README.zh-CN.md) · [Documentation](docs/README.md) · [Hack package reference](isa/hack/README.md)
 
 This is an executable, educational model of the [Hack](https://www.nand2tetris.org/) instruction set. It describes Hack's instruction encoding, ALU, registers, memory, and control flow in [Sail](https://github.com/rems-project/sail), then uses Sail's C backend to run real Hack assembly programs.
 
@@ -100,7 +100,7 @@ D=M
 D;JEQ
 ```
 
-Pseudoinstructions are therefore assembly conveniences, not additions to the ISA modeled in Sail. See [How Hack+ lowers to real instructions](isa/hack/ISA.md#how-hack-lowers-to-real-instructions) for every expansion and its register side effects. The final `.assert` directive becomes an executable Sail check; the run fails unless `R2` is exactly `42`.
+Pseudoinstructions are therefore assembly conveniences, not additions to the ISA modeled in Sail. See [How Hack+ lowers to real instructions](docs/hack/ISA.md#how-hack-lowers-to-real-instructions) for every expansion and its register side effects. The final `.assert` directive becomes an executable Sail check; the run fails unless `R2` is exactly `42`.
 
 Assemble without running to inspect the result:
 
@@ -307,6 +307,12 @@ For learning how gates compose into a CPU, start with NandGame or nand2tetris Pr
 ## Repository map
 
 ```text
+docs/
+├── README.md                  # Documentation index and learning path
+└── hack/
+    ├── ISA.md                 # Architecture and instruction semantics
+    ├── ASSEMBLER.md           # Parser, lowering, and two-pass assembly
+    └── EXECUTION.md           # Driver, C backend, workflow, and tests
 isa/hack/
 ├── hack.sail                  # Hack ISA semantics
 ├── programs/                  # Runnable Hack/Hack+ assembly
@@ -314,11 +320,11 @@ isa/hack/
 ├── hooks/                     # Replaceable execution hooks
 ├── tools/                     # Assembler, executor, and workflow
 ├── programs.toml              # Bundled program catalog
-└── README.md                  # Complete package reference
+└── README.md                  # Package reference
 support/                       # C-backend compatibility code
 tools/install_sail.py          # Project-local Sail installer
 justfile                       # Top-level command interface
 pixi.toml                      # Cross-platform environment
 ```
 
-A good next step is to run `multiply`, open `hack.sail`, and follow `encdec → alu → should_jump → execute`.
+A good next step is to run `multiply`, then follow the learning path in the [documentation index](docs/README.md).

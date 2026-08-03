@@ -1,12 +1,14 @@
 # Hack Package Reference
 
-[中文文档](README.zh-CN.md) · [Hack ISA guide](ISA.md) · [Project tutorial](../../README.md)
+[中文文档](README.zh-CN.md) · [Documentation](../../docs/README.md) · [Project tutorial](../../README.md)
 
 A self-contained Sail package for the nand2tetris Hack CPU. `nand2tetris` is the course name; **Hack** is the CPU and ISA name.
 
 ## Contents
 
-- `ISA.md` — Hack ISA, canonical encodings, execution semantics, and Hack+ lowering rules.
+- [`docs/hack/ISA.md`](../../docs/hack/ISA.md) — Hack ISA, canonical encodings, execution semantics, and Hack+ lowering rules.
+- [`docs/hack/ASSEMBLER.md`](../../docs/hack/ASSEMBLER.md) — parser, lowering, two-pass assembly, and annotated artifact internals.
+- [`docs/hack/EXECUTION.md`](../../docs/hack/EXECUTION.md) — generated Sail driver, C backend, workflow, and test architecture.
 - `hack.sail` — executable ISA semantics: encoding, ALU, registers, RAM, and control flow. It has no program-specific `main()`.
 - `justfile` — package-local command interface, imported as the root `hack` module.
 - `tools/assembler.py` — dependency-free, two-pass Hack assembler with a small typed parser, Hack+ pseudoinstructions, source directives, and annotated `.hack` I/O.

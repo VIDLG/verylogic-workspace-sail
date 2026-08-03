@@ -1,8 +1,8 @@
 # Hack 指令集架构（ISA）
 
-[English](ISA.md) · [Hack 包参考手册](README.zh-CN.md) · [项目教程](../../README.zh-CN.md)
+[English](ISA.md) · [文档中心](../README.zh-CN.md) · [汇编器原理](ASSEMBLER.zh-CN.md) · [执行与测试原理](EXECUTION.zh-CN.md)
 
-本文只讲 **Hack ISA 本身**：软件能够看到什么状态、机器指令怎样编码，以及一条指令怎样改变状态。运行命令、Hook、断言和 `.hack` 元数据等工具规则见 [Hack 包参考手册](README.zh-CN.md)。
+本文只讲 **Hack ISA 本身**：软件能够看到什么状态、机器指令怎样编码，以及一条指令怎样改变状态。运行命令、Hook、断言和 `.hack` 元数据等工具规则见 [Hack 包参考手册](../../isa/hack/README.zh-CN.md)。
 
 ## ISA 到底是什么
 
@@ -224,7 +224,7 @@ AM=D+1;JGT
 3. 把结果写入**旧 `A`** 指向的 RAM；
 4. 跳转到**旧 `A`** 指向的 ROM 地址。
 
-这正是 [`hack.sail`](hack.sail) 中先执行 `let old_a = A` 的原因。
+这正是 [`hack.sail`](../../isa/hack/hack.sail) 中先执行 `let old_a = A` 的原因。
 
 ## 标准汇编怎样变成机器码
 
@@ -319,7 +319,7 @@ D;JEQ
 
 ## 这份 ISA 如何映射到 Sail
 
-[`hack.sail`](hack.sail) 的结构几乎与本文一一对应：
+[`hack.sail`](../../isa/hack/hack.sail) 的结构几乎与本文一一对应：
 
 | Sail 定义 | ISA 概念 |
 | --- | --- |
@@ -346,10 +346,10 @@ D;JEQ
 ## 推荐阅读顺序
 
 1. 先看本文的 A/C 编码和执行伪代码；
-2. 打开 [`hack.sail`](hack.sail)，依次阅读 `encdec → alu → should_jump → execute`；
-3. 查看 [`programs/basic_alu.asm`](programs/basic_alu.asm)，对照标准汇编与 Hack+；
-4. 执行 `pixi run just hack asm basic_alu`，查看 `.build/basic_alu.hack`；
-5. 阅读 [`tests/isa_conformance.sail`](tests/isa_conformance.sail)，观察 ISA 规则如何直接变成测试。
+2. 打开 [`hack.sail`](../../isa/hack/hack.sail)，依次阅读 `encdec → alu → should_jump → execute`；
+3. 查看 [`programs/basic_alu.asm`](../../isa/hack/programs/basic_alu.asm)，对照标准汇编与 Hack+；
+4. 执行 `pixi run just hack asm basic_alu`，查看 `isa/hack/.build/basic_alu.hack`；
+5. 阅读 [`tests/isa_conformance.sail`](../../isa/hack/tests/isa_conformance.sail)，观察 ISA 规则如何直接变成测试。
 
 ## 规范来源
 
