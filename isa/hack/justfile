@@ -1,0 +1,25 @@
+set default-list := true
+
+# List bundled Hack programs.
+list:
+    python tools/workflow.py list
+
+# Type-check the Hack Sail model.
+check:
+    python tools/workflow.py check
+
+# Assemble a bundled program into .build/<program>.hack.
+asm program:
+    python tools/workflow.py asm {{ program }}
+
+# Assemble and execute a bundled program through Sail's C backend.
+run program:
+    python tools/workflow.py run {{ program }}
+
+# Run unit tests and every bundled program's Sail assertions.
+test:
+    python tools/workflow.py test
+
+# Remove generated Hack build artifacts.
+clean:
+    python tools/workflow.py clean

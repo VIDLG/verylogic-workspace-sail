@@ -1,0 +1,31 @@
+[workspace]
+authors = ["daleydeng <daleydeng@gmail.com>"]
+channels = ["conda-forge"]
+name = "verylogic-workspace-sail"
+platforms = ["win-64", "linux-64", "linux-aarch64"]
+version = "0.1.0"
+
+[target.win-64.activation.env]
+PATH = "%PIXI_PROJECT_ROOT%\\.pixi\\sail\\bin;%PATH%"
+SAIL_DIR = "%PIXI_PROJECT_ROOT%\\.pixi\\sail\\share\\sail"
+SAIL_PLUGIN_DIR = "%PIXI_PROJECT_ROOT%\\.pixi\\sail\\share\\libsail\\plugins"
+
+[target.unix.activation.env]
+PATH = "$PIXI_PROJECT_ROOT/.pixi/sail/bin:$PATH"
+SAIL_DIR = "$PIXI_PROJECT_ROOT/.pixi/sail/share/sail"
+SAIL_PLUGIN_DIR = "$PIXI_PROJECT_ROOT/.pixi/sail/share/libsail/plugins"
+
+[dependencies]
+just = "*"
+python = ">=3.11,<3.15"
+pytest = "*"
+gmp = "*"
+
+[target.win-64.dependencies]
+m2w64-gcc = "*"
+
+[target.linux-64.dependencies]
+gcc = "*"
+
+[target.linux-aarch64.dependencies]
+gcc = "*"

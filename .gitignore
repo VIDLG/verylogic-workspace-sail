@@ -1,0 +1,11 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# Python and Sail generated artifacts
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+sail_smt_cache
+isa/*/.build/*
+!isa/*/.build/.gitkeep

@@ -1,0 +1,32 @@
+[isa]
+description = "nand2tetris Hack 16-bit CPU ISA"
+
+[[programs]]
+name = "isa_conformance"
+source = "programs/isa_conformance.asm"
+description = "Direct Sail checks for ALU, jumps, destinations, and state transitions"
+
+[[programs]]
+name = "basic_alu"
+source = "programs/basic_alu.asm"
+description = "ALU arithmetic, bitwise operations, negation, and conditional branch"
+
+[[programs]]
+name = "multiply"
+source = "programs/multiply.asm"
+description = "Repeated-addition multiplication: 6 times 7"
+
+[[programs]]
+name = "divide"
+source = "programs/divide.asm"
+description = "Repeated-subtraction division: 100 divided by 7"
+
+[[programs]]
+name = "fibonacci"
+source = "programs/fibonacci.asm"
+description = "Iterative Fibonacci F(10) with loop control"
+
+[[programs]]
+name = "gcd"
+source = "programs/gcd.asm"
+description = "Subtraction-based Euclidean GCD of 1071 and 462"
