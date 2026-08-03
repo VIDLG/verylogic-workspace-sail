@@ -1,3 +1,4 @@
+.description Repeated-subtraction division: 100 divided by 7
 // Integer division by repeated subtraction.
 // Input: R0=100, R1=7. Expected: R2=14 (quotient), R3=2 (remainder).
 SET R0, 100

@@ -1,3 +1,4 @@
+.description Repeated-addition multiplication: 6 times 7
 // Basic multiplication by repeated addition.
 // Input: R0=6, R1=7. Expected output: R2=42.
 SET R0, 6

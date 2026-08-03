@@ -20,6 +20,7 @@ just = "*"
 python = ">=3.11,<3.15"
 pytest = "*"
 gmp = "*"
+nodejs = "22.*"
 
 [target.win-64.dependencies]
 m2w64-gcc = "*"

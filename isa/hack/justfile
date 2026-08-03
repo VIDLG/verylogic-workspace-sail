@@ -8,13 +8,13 @@ list:
 check:
     python tools/workflow.py check
 
-# Assemble a bundled program into .build/<program>.hack.
-asm program:
-    python tools/workflow.py asm {{ program }}
+# Assemble a program; comments: none, summary, or full.
+asm program comments="full":
+    python tools/workflow.py asm {{ program }} --comments {{ comments }}
 
-# Assemble and execute a bundled program through Sail's C backend.
-run program:
-    python tools/workflow.py run {{ program }}
+# Execute a program; comments: none, summary, or full.
+run program comments="full":
+    python tools/workflow.py run {{ program }} --comments {{ comments }}
 
 # Run unit tests and every bundled program's Sail assertions.
 test:

@@ -23,6 +23,28 @@ def test_driver_stops_at_or_beyond_rom_end(tmp_path: Path) -> None:
     assert "hack_hook_after_run(steps);" in generated
 
 
+def test_driver_comment_levels_control_teaching_annotations(tmp_path: Path) -> None:
+    metadata = AssemblyMetadata(assertions=(Assertion("A", 0, 3),))
+    program = LoadedHack([0], metadata, ("ROM[0000] L2: @0",))
+    contents: dict[str, str] = {}
+
+    for level in ("none", "summary", "full"):
+        driver = tmp_path / f"{level}.driver.sail"
+        write_driver(program, None, driver, tmp_path / "program.hack", level)
+        contents[level] = driver.read_text(encoding="utf-8")
+
+    assert "//" not in contents["none"]
+    assert "Decode the ROM word" in contents["summary"]
+    assert "ROM[0000] L2: @0" in contents["summary"]
+    assert "Source line 3: .assert A == 0x0000" not in contents["summary"]
+    assert "Source line 3: .assert A == 0x0000" in contents["full"]
+    assert "Sail assertions and exit status determine success" in contents["full"]
+
+    with pytest.raises(ValueError, match="comment level"):
+        write_driver(program, None, tmp_path / "invalid.driver.sail", tmp_path / "program.hack", "verbose")
+
+
+
 def test_bounded_nonterminating_driver_runs_exact_steps(tmp_path: Path) -> None:
     metadata = AssemblyMetadata(assertions=(Assertion("PC", 1, 5, "==", "unsigned"),), max_steps=3)
     program = LoadedHack([0, int("1110101010000111", 2)], metadata)

@@ -6,6 +6,7 @@ from isa.hack.tools.assembler import (
     AssemblyError,
     assemble_text,
     load_hack,
+    source_description,
     write_hack,
 )
 
@@ -73,6 +74,42 @@ def test_hook_directive_defaults_normalizes_and_does_not_emit_words() -> None:
     assert default.words == custom.words == [0]
     assert default.metadata.hook_path == "hooks.sail"
     assert custom.metadata.hook_path == "hooks/trace.sail"
+
+
+def test_description_is_source_only_and_does_not_emit_words(tmp_path: Path) -> None:
+    text = ".description Demonstrates the Hack ALU\n@0\n"
+    described = assemble_text(text)
+    baseline = assemble_text("@0\n")
+    output = tmp_path / "described.hack"
+    write_hack(described, output)
+
+    assert source_description(text) == "Demonstrates the Hack ALU"
+    assert described.words == baseline.words == [0]
+    assert described.metadata == baseline.metadata
+    assert "description" not in output.read_text(encoding="utf-8")
+
+
+def test_hack_artifact_comment_levels_preserve_machine_contract(tmp_path: Path) -> None:
+    assembly = assemble_text("SET R0, 1\nHALT\n.assert R0 == 1\n")
+    contents: dict[str, str] = {}
+
+    for level in ("none", "summary", "full"):
+        output = tmp_path / f"{level}.hack"
+        write_hack(assembly, output, level)
+        contents[level] = output.read_text(encoding="utf-8")
+        loaded = load_hack(output)
+        assert loaded.words == assembly.words
+        assert loaded.metadata == assembly.metadata
+
+    none_words = [line for line in contents["none"].splitlines() if line and not line.startswith("//")]
+    assert all(len(line) == 16 for line in none_words)
+    assert "//%hack assert" in contents["none"]
+    assert "ROM[0000] L1" in contents["summary"]
+    assert "SET R0, 1 => @1" not in contents["summary"]
+    assert "ROM[0000] L1: SET R0, 1 => @1" in contents["full"]
+
+    with pytest.raises(ValueError, match="comment level"):
+        write_hack(assembly, tmp_path / "invalid.hack", "verbose")
 
 
 @pytest.mark.parametrize(
@@ -162,6 +199,9 @@ def test_basic_alu_relational_assertions_do_not_change_machine_words() -> None:
 @pytest.mark.parametrize(
     "source",
     [
+        ".description\n",
+        ".description // missing text\n",
+        ".description first\n.description second\n",
         ".max_steps 0\n",
         ".max_steps 1\n.max_steps 2\n",
         ".max_steps nope\n",

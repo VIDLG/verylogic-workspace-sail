@@ -1,48 +1,35 @@
-# The Hack ISA, Executed with Sail
+# verylogic Sail ISA Workspace
 
-[中文教程](README.zh-CN.md) · [Documentation](docs/README.md) · [Hack package reference](isa/hack/README.md)
+[中文](README.zh-CN.md) · [Documentation](https://vidlg.github.io/verylogic-workspace-sail/) · [MDX source](site/docs/en/index.mdx)
 
-This is an executable, educational model of the [Hack](https://www.nand2tetris.org/) instruction set. It describes Hack's instruction encoding, ALU, registers, memory, and control flow in [Sail](https://github.com/rems-project/sail), then uses Sail's C backend to run real Hack assembly programs.
+An educational workspace for specifying, executing, and testing instruction-set architectures with [Sail](https://github.com/rems-project/sail). Each ISA is an independent module with its own model, programs, tools, and tests; Rspress publishes the accompanying tutorials and implementation guides as a bilingual MDX site.
 
-If nand2tetris teaches how to build a computer from NAND gates, this repository explores the next abstraction boundary:
+## Start here
 
-> How do we turn the prose and encoding tables in a processor specification into a precise, testable, executable ISA model?
+| Goal | Entry point |
+| --- | --- |
+| Run the Hack model | [Quick start](#quick-start) |
+| Learn Hack and Sail | [Hack tutorial](https://vidlg.github.io/verylogic-workspace-sail/hack/tutorial) |
+| Study instruction semantics | [Hack ISA](https://vidlg.github.io/verylogic-workspace-sail/hack/isa) |
+| Understand the assembler and executor | [Hack documentation](https://vidlg.github.io/verylogic-workspace-sail/hack/) |
+| Work inside the Hack package | [`isa/hack/README.md`](isa/hack/README.md) |
+| Add another ISA | [Adding an ISA](#adding-an-isa) |
 
-The project currently implements the Hack ISA. It is not a gate-level simulator or a generic framework for arbitrary Sail models.
+## Why Sail
 
-## Hack, nand2tetris, and Sail
+An ISA is the software-visible contract of a processor: instruction encodings, architectural state, and the state transition produced by each instruction. Sail lets one model serve as a readable specification, an executable implementation, and input to code-generation and formal-tool backends.
 
-### Where does Hack come from?
+This workspace adds the module-specific pieces needed to teach and test an ISA end to end:
 
-**Hack** is the 16-bit teaching computer from [The Elements of Computing Systems](https://www.nand2tetris.org/book), better known as **nand2tetris**. The course starts with NAND gates and proceeds through combinational logic, an ALU, registers, a CPU, an assembler, a virtual machine, a compiler, and an operating system.
-
-The closest course units are:
-
-- [Project 05: Computer Architecture](https://www.nand2tetris.org/project05), which builds the Hack CPU, Memory, and Computer in HDL;
-- [Project 06: Assembler](https://www.nand2tetris.org/project06), which translates Hack assembly into 16-bit machine words;
-- Chapters 4 and 5 of the book, which describe the machine language and hardware architecture.
-
-`nand2tetris` is the course and project name. **Hack** is the CPU and ISA modeled here.
-
-### What is Sail?
-
-[Sail](https://www.cl.cam.ac.uk/~pes20/sail/) is a strongly typed language for describing instruction-set architectures. A Sail model can express instruction encodings, decoded instruction forms, architectural state, and state transitions. Sail can type-check the model and generate implementations for backends including C and OCaml, as well as definitions for theorem-proving tools.
-
-Sail resembles OCaml in places, but **Sail is not OCaml**. This repository uses Sail's type checker and C backend so that one compact ISA description serves as both readable specification and executable implementation.
-
-### Where does NandGame fit?
-
-[NandGame](https://nandgame.com/) offers another excellent interactive route from a NAND gate to logic, arithmetic, a processor, and a computer. It is useful for building hardware intuition; nand2tetris provides the structured course and Hack platform; this repository focuses on executable ISA semantics. The three resources complement one another, but their circuit and instruction-set details should not be assumed to be identical.
-
-## What you can learn here
-
-By reading and running this repository, you can explore:
-
-1. How Hack's two instruction forms map to 16-bit words.
-2. Which parts of `A`, `D`, `PC`, and RAM form the architectural state.
-3. How the C-instruction fields `a`, `comp`, `dest`, and `jump` define one state transition.
-4. Why memory writes and jumps must use the old value of `A` when an instruction also updates `A`.
-5. How assembly, machine code, a generated Sail driver, C code, and assertions form an end-to-end regression pipeline.
+```mermaid
+flowchart TD
+    Model[Sail ISA model] --> Workflow[ISA-owned workflow]
+    Program[Programs and test inputs] --> Workflow
+    Workflow --> Artifact[Machine code or driver]
+    Artifact --> Backend[Sail backend]
+    Backend --> Executable[Executable model]
+    Executable --> Tests[Assertions and regressions]
+```
 
 ## Quick start
 
@@ -51,280 +38,111 @@ Install [Pixi](https://pixi.sh/latest/installation/), then run from the reposito
 ```sh
 pixi run just install
 pixi run sail --version
-pixi run just hack check
 pixi run just hack list
 pixi run just hack run multiply
 ```
 
-The repository pins Sail `0.20.2` under the Git-ignored `.pixi/sail/`; it never relies on an arbitrary Sail executable from the system `PATH`. Supported hosts are Windows AMD64, Linux x86_64, and Linux aarch64. This pinned release has no official macOS binary asset, so the current workflow does not support macOS.
+A successful Hack program prints `ASSERT PASS` followed by its final architectural state. Continue with the [Hack tutorial](https://vidlg.github.io/verylogic-workspace-sail/hack/tutorial) to inspect the source, machine code, generated Sail driver, and assertions.
 
-Pixi also supplies Python, Pytest, Just, GCC or MinGW GCC, and GMP.
-
-## First program: multiply 6 by 7
-
-[`isa/hack/programs/multiply.asm`](isa/hack/programs/multiply.asm) uses repeated addition:
-
-```asm
-SET R0, 6
-SET R1, 7
-SET R2, 0
-
-(LOOP)
-JEQ R1, DONE
-@R0
-D=M
-@R2
-M=D+M
-DEC R1
-GOTO LOOP
-
-(DONE)
-HALT
-
-.assert R2 == 42
-```
-
-`SET`, `JEQ target, label`, `DEC`, `GOTO`, and `HALT` are **Hack+ pseudoinstructions** supplied by this repository's assembler. The assembler replaces them with standard Hack instructions before resolving labels and encoding machine words. For example:
-
-```asm
-// SET R0, 6
-@6
-D=A
-@R0
-M=D
-
-// JEQ R1, DONE
-@R1
-D=M
-@DONE
-D;JEQ
-```
-
-Pseudoinstructions are therefore assembly conveniences, not additions to the ISA modeled in Sail. See [How Hack+ lowers to real instructions](docs/hack/ISA.md#how-hack-lowers-to-real-instructions) for every expansion and its register side effects. The final `.assert` directive becomes an executable Sail check; the run fails unless `R2` is exactly `42`.
-
-Assemble without running to inspect the result:
+Run all repository tests with:
 
 ```sh
-pixi run just hack asm multiply
+pixi run just test
 ```
 
-The generated `isa/hack/.build/multiply.hack` contains standard 16-bit machine words plus source annotations:
+## ISA modules
+
+| ISA | Model | Documentation | Package reference |
+| --- | --- | --- | --- |
+| Hack | nand2tetris 16-bit teaching ISA | [Tutorial and internals](https://vidlg.github.io/verylogic-workspace-sail/hack/) | [`isa/hack`](isa/hack/README.md) |
+
+Module commands use a common outer shape:
 
 ```text
-0000000000000110 // ROM[0000] L3: SET R0, 6 => @6
-1110110000010000 // ROM[0001] L3: SET R0, 6 => D=A
+pixi run just <isa> <action> [program]
 ```
 
-This is a useful bridge between the Project 06 encoding tables, assembly source, and Sail's decoder.
+Modules expose the actions that make sense for their toolchain:
 
-## A guided reading of `hack.sail`
-
-The core model is only about one hundred lines: [`isa/hack/hack.sail`](isa/hack/hack.sail). Read it in the following order.
-
-### 1. Words and instruction encodings
-
-```sail
-type word = bits(16)
-type address = bits(15)
-
-union instruction = {
-  AInstruction : address,
-  CInstruction : (bit, bits(6), bits(3), bits(3))
-}
-
-mapping encdec : instruction <-> bits(16) = {
-  AInstruction(address) <-> 0b0 @ address,
-  CInstruction(a, comp, dest, jump) <-> 0b111 @ a @ comp @ dest @ jump
-}
-```
-
-Hack has two machine-instruction forms:
-
-| Instruction | Encoding | Effect |
-| --- | --- | --- |
-| A instruction | `0vvvvvvvvvvvvvvv` | Load a 15-bit value into `A` |
-| C instruction | `111accccccdddjjj` | Compute, write destinations, and optionally jump |
-
-Sail's bidirectional `mapping` states encoding and decoding together, close to the notation used in an ISA manual.
-
-### 2. Architectural state
-
-```sail
-register A : word = 0x0000
-register D : word = 0x0000
-register PC : program_counter = 0b000000000000000
-register RAM : vector(32768, word) = vector_init(32768, 0x0000)
-```
-
-The model has two 16-bit registers, a 15-bit program counter, and `32768 × 16` bits of RAM. An A instruction updates `A` and `PC`. A C instruction reads `D` and either `A` or `RAM[A]`, then decides what to write and whether to jump.
-
-### 3. ALU and jump tables
-
-`alu(comp, x, y)` explicitly matches all official `comp` encodings. The C instruction's `a` bit selects whether `y` is `A` or `RAM[A]`. `should_jump` interprets the three `jump` bits using the ALU result's zero value and sign bit.
-
-These tables are executable counterparts to the tables in the Hack specification: a missing or malformed case is caught by Sail or by the conformance tests rather than hidden in host-language control flow.
-
-### 4. One instruction as a state transition
-
-`execute` is the center of the model. The C-instruction branch saves `old_a` before writing any destination:
-
-```sail
-let old_a = A;
-let y = if a == 0b0 then A else RAM[unsigned(ram_address(A))];
-let out = alu(comp, D, y);
-```
-
-Memory writes and jumps then use that saved value:
-
-```sail
-RAM[unsigned(ram_address(old_a))] = out
-PC = ram_address(old_a)
-```
-
-This captures a subtle Hack rule. If one C instruction updates `A` while also writing `M` or taking a jump, the memory address and jump target come from the value of `A` at the start of that instruction.
-
-## Execution pipeline
-
-```text
-programs/*.asm
-  │  two-pass assembly and Hack+ expansion
-  ▼
-.build/<program>.hack
-  │  reload words, assertions, hook, and HALT metadata
-  ▼
-generated .driver.sail + hack.sail + hook
-  │  Sail type checking and C backend
-  ▼
-.build/<program>.exe
-  │  execute until HALT, end of ROM, or a step limit
-  ▼
-evaluate source .assert directives
-```
-
-Reloading the `.hack` artifact is intentional: execution consumes exactly the machine words and metadata written to disk, with no hidden assembler state.
-
-Important components:
-
-- [`isa/hack/hack.sail`](isa/hack/hack.sail): executable Hack ISA semantics;
-- `isa/hack/tools/assembler.py`: two-pass assembler, Hack+ expansion, and annotated machine code;
-- `isa/hack/tools/executor.py`: Sail driver generation, C-backend invocation, and execution;
-- `isa/hack/programs/*.asm`: examples and end-to-end regressions;
-- [`isa/hack/tests/isa_conformance.sail`](isa/hack/tests/isa_conformance.sail): direct ALU, jump, destination, and transition checks;
-- `isa/hack/tests/`: Python tests for the assembler and executor.
-
-For the complete assertion, hook, pseudoinstruction, and annotated-file syntax, see the [Hack package reference](isa/hack/README.md).
-
-## Suggested exercises
-
-### Compare source with machine encoding
-
-1. Read `encdec` in `hack.sail`.
-2. Write or modify a small standard Hack assembly program.
-3. Run `pixi run just hack asm <name>`.
-4. Compare each generated word with the Project 06 tables.
-
-### Add a Sail-level ALU check
-
-Add an assertion to `test_alu()` in [`isa/hack/tests/isa_conformance.sail`](isa/hack/tests/isa_conformance.sail), then run:
-
-```sh
-pixi run just hack run isa_conformance
-```
-
-These tests call the Sail functions directly; Python does not simulate the ISA.
-
-### Add a program
-
-1. Add an `.asm` file under `isa/hack/programs/`.
-2. Register its name, source, and description in `isa/hack/programs.toml`.
-3. Put at least one `.assert` directive beside the source.
-4. Run `pixi run just hack run <name>`.
-5. Run `pixi run just hack test` for the complete package regression.
-
-### Add tracing or a device model
-
-Select a package-local Sail hook from assembly:
-
-```asm
-.hook hooks/trace.sail
-```
-
-Hooks run in the same Sail/C process and can inspect or update `A`, `D`, `PC`, and `RAM`. Start with [`isa/hack/hooks/trace.sail`](isa/hack/hooks/trace.sail) and extend it with per-step tracing, coverage counters, or simple devices.
-
-## Commands
-
-```sh
-pixi run just                         # List top-level commands
-pixi run just install                 # Install the pinned Sail release
-pixi run just hack                    # List Hack commands
-pixi run just hack list               # List bundled programs
-pixi run just hack check              # Type-check hack.sail
-pixi run just hack asm fibonacci      # Assemble only
-pixi run just hack run fibonacci      # Assemble, generate C, and run
-pixi run just hack test               # Hack unit and integration tests
-pixi run just test                    # Whole-repository tests
-pixi run just hack clean              # Remove Hack build artifacts
-pixi run just clean-all               # Remove all ISA build artifacts
-```
-
-## `.sail` syntax highlighting
-
-Sail has OCaml-like syntax, but common editors do not always provide first-class Sail support. [`.zed/settings.json`](.zed/settings.json) maps `*.sail` to **OCaml syntax highlighting** in Zed and disables the OCaml language server and formatter so they do not misdiagnose or rewrite Sail as if it were OCaml.
-
-In other editors without a Sail extension, associating `*.sail` with the OCaml language mode gives reasonable approximate highlighting. It does not provide Sail validation; use the real type checker:
-
-```sh
-pixi run just hack check
-```
-
-Check the [Sail repository](https://github.com/rems-project/sail) for current editor-support options.
-
-## Scope and limitations
-
-The model deliberately stays at the ISA level:
-
-- It implements A/C instructions, the ALU, registers, RAM, and PC transitions.
-- The 15-bit address space is currently plain RAM; Screen and Keyboard memory-mapped device behavior is not modeled.
-- NAND gates, chip timing, and nand2tetris HDL are not simulated.
-- Hack+ is assembler convenience syntax, not an ISA extension.
-- The current workflow executes through Sail's C backend; it does not claim that the model has been formally proved correct.
-
-For learning how gates compose into a CPU, start with NandGame or nand2tetris Projects 01–05. For learning how to specify exactly what each CPU instruction does, start with `hack.sail` here.
-
-## Further resources
-
-| Resource | Why read it |
+| Action | Purpose |
 | --- | --- |
-| [Sail project](https://www.cl.cam.ac.uk/~pes20/sail/) | Goals, backends, and research background |
-| [Sail on GitHub](https://github.com/rems-project/sail) | Source, releases, example ISAs, and editor support |
-| [Sail Language Reference](https://alasdair.github.io/manual.html) | Syntax, types, mappings, registers, and backends |
-| [nand2tetris](https://www.nand2tetris.org/) | Course, software, projects, and the Hack platform |
-| [The Elements of Computing Systems](https://www.nand2tetris.org/book) | The complete hardware-to-OS learning path |
-| [Project 05](https://www.nand2tetris.org/project05) | Build the Hack CPU, Memory, and Computer |
-| [Project 06](https://www.nand2tetris.org/project06) | Build the assembler and study machine encoding |
-| [NandGame](https://nandgame.com/) | Interactively build a computer from NAND gates |
+| `list` | List runnable examples |
+| `check` | Type-check the Sail model |
+| `asm` | Produce machine code or another ISA-specific artifact |
+| `run` | Execute one example |
+| `test` | Run the module regression suite |
+| `clean` | Remove generated artifacts |
 
-## Repository map
+The action names are consistent; assemblers, loaders, drivers, metadata, and execution strategies remain ISA-specific.
 
-```text
-docs/
-├── README.md                  # Documentation index and learning path
-└── hack/
-    ├── ISA.md                 # Architecture and instruction semantics
-    ├── ASSEMBLER.md           # Parser, lowering, and two-pass assembly
-    └── EXECUTION.md           # Driver, C backend, workflow, and tests
-isa/hack/
-├── hack.sail                  # Hack ISA semantics
-├── programs/                  # Runnable Hack/Hack+ assembly
-├── tests/isa_conformance.sail # Direct Sail conformance checks
-├── hooks/                     # Replaceable execution hooks
-├── tools/                     # Assembler, executor, and workflow
-├── programs.toml              # Bundled program catalog
-└── README.md                  # Package reference
-support/                       # C-backend compatibility code
-tools/install_sail.py          # Project-local Sail installer
-justfile                       # Top-level command interface
-pixi.toml                      # Cross-platform environment
+## Platforms and dependencies
+
+Pixi supplies Python, Pytest, Just, GMP, Node.js 22, and the host C compiler. The project installs Sail `0.20.2` under the Git-ignored `.pixi/sail/` directory and does not depend on an arbitrary system Sail executable.
+
+Supported hosts:
+
+- Windows AMD64;
+- Linux x86_64;
+- Linux aarch64.
+
+Sail `0.20.2` has no official macOS binary asset, so the installer supports only the hosts listed above. It selects the official host asset, verifies its SHA-256 digest, and rejects unsafe archive paths and links.
+
+## Documentation site
+
+The bilingual MDX site lives under `site/` and is built with [Rspress](https://rspress.dev/):
+
+```sh
+pixi install
+pixi run just site install  # Install locked site dependencies
+pixi run just site dev      # Development server
+pixi run just site build    # Static output in site/dist/
+pixi run just site preview  # Preview the built site
 ```
 
-A good next step is to run `multiply`, then follow the learning path in the [documentation index](docs/README.md).
+Published source follows stable locale and ISA routes:
+
+```text
+site/docs/<locale>/<isa>/<article>.mdx
+```
+
+For example, `site/docs/en/hack/assembler.mdx` becomes `/hack/assembler`; Chinese pages use the `/zh/` prefix.
+
+## Adding an ISA
+
+1. Create `isa/<name>/` with the smallest useful Sail model.
+2. Keep programs, tools, tests, hooks, and build artifacts inside that module.
+3. Add a module `justfile` for the actions it supports.
+4. Register the module in the root `justfile` and aggregate its tests and cleanup.
+5. Add `site/docs/en/<name>/` and `site/docs/zh/<name>/` with matching stable routes.
+6. Add the new module to the Rspress sidebar and the ISA table above.
+
+A typical module is:
+
+```text
+isa/<name>/
+├── README.md / README.zh-CN.md
+├── <model>.sail
+├── justfile
+├── programs/
+├── tools/
+├── tests/
+└── .build/
+```
+
+## `.sail` editor highlighting
+
+Sail resembles OCaml in places but is not OCaml. [`.zed/settings.json`](.zed/settings.json) maps `*.sail` to OCaml syntax highlighting while disabling the OCaml language server and formatter, preventing incorrect diagnostics and rewrites.
+
+Other editors without Sail support can use OCaml mode as approximate highlighting. Validate source with the module's `check` command rather than the fallback highlighter.
+
+## Repository layout
+
+```text
+isa/                  Self-contained ISA modules
+site/                 Rspress configuration and bilingual MDX documentation
+support/              Shared Sail C-backend compatibility code
+tests/                Repository-level tool tests
+tools/install_sail.py Pinned Sail installer
+justfile              Workspace and site commands
+pixi.toml / pixi.lock Cross-platform environment
+```

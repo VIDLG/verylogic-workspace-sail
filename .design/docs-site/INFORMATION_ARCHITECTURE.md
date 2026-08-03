@@ -1,0 +1,161 @@
+# Information Architecture: verylogic Sail ISA Documentation
+
+## Audience and Task Priority
+
+Reader needs are ranked by expected frequency:
+
+1. **Learners** run a Hack example, inspect the generated artifacts, and understand the ISA.
+2. **Contributors** trace or change the assembler, executor, workflow, and tests.
+3. **Maintainers** add another self-contained ISA module and its documentation.
+
+The primary reading view—the place readers are expected to spend most of their time—is a long-form ISA article in the Rspress content pane, with the locale-specific sidebar preserving learning context. Navigation should reach any article within three choices: locale, ISA, article.
+
+## Site Map
+
+- Documentation home `/` and `/zh/`
+  - Hack overview `/hack/` and `/zh/hack/`
+    - Tutorial `/hack/tutorial` and `/zh/hack/tutorial`
+    - Instruction set `/hack/isa` and `/zh/hack/isa`
+    - Toolchain internals
+      - Assembler `/hack/assembler` and `/zh/hack/assembler`
+      - Execution and tests `/hack/execution` and `/zh/hack/execution`
+- Repository entry points on GitHub
+  - Workspace README `/README.md` and `/README.zh-CN.md`
+  - Hack package reference `/isa/hack/README.md` and `/isa/hack/README.zh-CN.md`
+
+## Navigation Model
+
+- **Primary navigation**: the site title/home link and locale switcher in the Rspress header. The workspace home selects an ISA rather than duplicating each ISA's task menu.
+- **Secondary navigation**: a locale-specific sidebar grouped as Workspace, Hack, and Toolchain internals. Within Hack, the order is overview, tutorial, then ISA; the advanced group contains assembler, then execution.
+- **Utility navigation**: repository and package-reference links appear contextually in page introductions.
+- **Small screens**: use the Rspress theme's collapsible sidebar and locale selector without a second custom navigation system.
+- **Maximum depth**: three levels: locale, ISA, article.
+
+## Content Hierarchy
+
+### Workspace documentation home
+
+1. Choose an ISA module.
+2. See the purpose and maturity of each available module.
+3. Reach repository setup and contribution information.
+
+### Hack overview
+
+1. Run the first program.
+2. Choose a document by learning goal.
+3. See the end-to-end source-to-execution model.
+4. Reach the package reference for exact syntax.
+
+### Tutorial
+
+1. Explain Hack, nand2tetris, NandGame, and Sail.
+2. Run and inspect one program.
+3. Introduce the executable-model pipeline.
+4. Offer exercises and external resources.
+
+### ISA
+
+1. Define the software-visible machine contract.
+2. Explain instruction encodings and state transitions.
+3. Separate standard Hack from assembler conveniences.
+4. Map the contract to Sail.
+
+### Assembler internals
+
+1. Follow parser and IR stages.
+2. Explain Hack+ lowering and two-pass assembly.
+3. Explain source mapping and metadata.
+4. Connect implementation to tests and exercises.
+
+### Execution and tests
+
+1. Follow machine code into a generated Sail driver.
+2. Explain completion, bounds, assertions, and hooks.
+3. Explain Sail-to-C compilation.
+4. Explain workflow and regression-test layers.
+
+### Hack package reference
+
+1. Provide commands and module paths beside source.
+2. Specify program directives and assertion behavior.
+3. Summarize extension points and pseudoinstructions.
+4. Link to long-form explanations rather than duplicating them.
+
+## User Flows
+
+### First successful run
+
+1. Reader lands on the workspace or Hack overview.
+2. Reader installs dependencies with Pixi.
+3. Reader runs `pixi run just hack run multiply`.
+4. Reader sees `ASSERT PASS` and continues to the tutorial.
+
+### Learn the Hack machine
+
+1. Reader starts with the tutorial for context.
+2. Reader opens the ISA guide for the machine contract.
+3. Reader follows assembler lowering into real A/C instructions.
+4. Reader follows execution into Sail assertions and tests.
+
+### Inspect generated teaching artifacts
+
+1. Learner runs `pixi run just hack asm multiply summary` to correlate source lines with ROM addresses.
+2. Learner runs `pixi run just hack run multiply full` to generate and execute the complete teaching artifact set.
+3. Learner compares matching per-ROM comments in `.hack` and `.driver.sail`.
+4. Learner follows the Toolchain internals section when ready to understand how those comments cross the file boundary.
+
+### Debug or extend the toolchain
+
+1. Contributor starts from `isa/hack/README` or a source file.
+2. Contributor uses the module map to select assembler or executor documentation.
+3. Contributor changes code and runs focused tests.
+4. Contributor runs `pixi run just hack test` for the complete module.
+
+### Add another ISA
+
+1. Maintainer reads the root workspace convention.
+2. Maintainer creates `isa/<name>/` with its own workflow.
+3. Maintainer adds matching `/<name>/` and `/zh/<name>/` documentation.
+4. Maintainer adds the module to site navigation and aggregate commands.
+
+## Naming Conventions
+
+| Concept | Label | Notes |
+| --- | --- | --- |
+| Instruction-set module | ISA module | Use for `isa/<name>/` as a unit |
+| Published prose | Documentation | Avoid “documentation library” when “documentation” is enough |
+| Introductory sequence | Tutorial | Hands-on, ordered learning |
+| Exact local syntax | Package reference | Lives beside code in `isa/<isa>/README*` |
+| Python coordinator | workflow | Preserve the implementation's term |
+| Advanced implementation section | Toolchain internals | Groups assembler and execution without mixing them into the beginner path |
+| Machine-code runner | executor | Preserve the implementation's term |
+| Extended assembly syntax | Hack+ pseudoinstruction | Never call it part of the Hack ISA |
+
+## Component Reuse Map
+
+| Component | Used on | Behavior differences |
+| --- | --- | --- |
+| Rspress locale shell | All site pages | English and Chinese labels and routes |
+| ISA sidebar group | Every ISA section | Page labels are localized; order is shared |
+| Article opening | Tutorial, ISA, assembler, execution | States the question answered and links to neighboring context |
+| Package-reference link | ISA articles | Points to exact commands and directives beside source |
+| Previous/next path | Ordered Hack articles | Moves through tutorial → ISA → assembler → execution |
+
+## Content Growth Plan
+
+- Each new ISA receives one parallel `site/docs/<locale>/<isa>/` subtree.
+- Start with overview, tutorial, and ISA; add tool-specific pages only when that ISA has those tools.
+- Keep article depth flat beneath each ISA. Split an article only when it has an independent reader task and stable navigation label.
+- Search is supplied by Rspress; no manually maintained global topic index is needed at the current scale.
+- Package README files remain short lookup pages and should not absorb long-form articles as the site grows.
+
+## URL Strategy
+
+- Default English pattern: `/<isa>/<article>`.
+- Chinese pattern: `/zh/<isa>/<article>`.
+- Rspress omits the default `en` locale from published URLs; `zh` remains explicit.
+- ISA segments use lowercase stable module names such as `hack`.
+- Overview routes come from `index.mdx`, for example `/hack/` and `/zh/hack/`.
+- Article slugs: lowercase durable concepts (`tutorial`, `isa`, `assembler`, `execution`).
+- Avoid file-format or implementation-version terms in URLs.
+- Do not use query parameters for primary navigation.

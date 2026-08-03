@@ -9,3 +9,8 @@ __pycache__/
 sail_smt_cache
 isa/*/.build/*
 !isa/*/.build/.gitkeep
+
+# Rspress documentation site
+site/node_modules/
+site/dist/
+site/.rspress/

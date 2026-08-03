@@ -1,153 +1,178 @@
-# Hack 包参考手册
+# Hack Sail 模块
 
-[English](README.md) · [文档中心](../../docs/README.zh-CN.md) · [项目教程](../../README.zh-CN.md)
+[English](README.md) · [文档概览](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/) · [入门教程](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/tutorial) · [ISA 指南](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa)
 
-这是 nand2tetris Hack CPU 的自包含 Sail 包。`nand2tetris` 是课程名；**Hack** 才是 CPU 与 ISA 的名称。
+这个模块使用 Sail 实现 nand2tetris Hack 指令集，并提供汇编、执行和测试 Hack 程序所需的工具。
 
-## 内容
-
-- [`docs/hack/ISA.zh-CN.md`](../../docs/hack/ISA.zh-CN.md) — Hack ISA、正式指令编码、执行语义及 Hack+ 降级规则。
-- [`docs/hack/ASSEMBLER.zh-CN.md`](../../docs/hack/ASSEMBLER.zh-CN.md) — 解析、伪指令降级、两遍汇编及产物格式原理。
-- [`docs/hack/EXECUTION.zh-CN.md`](../../docs/hack/EXECUTION.zh-CN.md) — Sail driver 生成、C 后端、工作流及测试架构。
-- `hack.sail` — 可执行的 ISA 语义：编码、ALU、寄存器、RAM 与控制流；不包含具体程序的 `main()`。
-- `justfile` — 包内命令接口，在根目录中作为 `hack` 模块导入。
-- `tools/assembler.py` — 无第三方依赖的两遍 Hack 汇编器，包含小型类型化解析器、Hack+ 伪指令、源文件指令与带注释的 `.hack` 读写。
-- `tools/executor.py` — 使用 Sail C 后端的宿主侧执行入口。
-- `tools/workflow.py` — 包内清单、回归测试与清理编排。
-- `hooks.sail` — 默认的包内 Sail hook API 实现；默认为空实现。
-- `hooks/trace.sail` — 安静的示例 hook，会记录执行开始和结束。
-- `programs.toml` — 包内程序清单。
-- `programs/` — 可执行汇编程序；预期结果与程序代码放在一起。
-- `tests/isa_conformance.sail` — 直接检查全部 ALU 操作、跳转真值表、destination 掩码及关键状态转换规则。
-
-## 执行链
-
-```text
-programs/*.asm
-  -> tools/assembler.py
-  -> 带注释的 .build/<program>.hack
-  -> tools/executor.py 重新加载该 .hack 文件
-  -> 生成 .driver.sail
-  -> Sail C 后端
-  -> .build/<program>.exe
-```
-
-写入后再加载是刻意保留的教学步骤：生成的 Sail driver 只消费 `.hack` 产物中真实存在的机器字与元数据，不依赖汇编阶段遗留的隐藏状态。
-
-## 平台支持
-
-Sail C 后端工作流使用项目本地固定的 Sail 0.20.2 二进制：支持 Windows AMD64、Linux x86_64 和 Linux aarch64。它在 Windows 使用 Pixi 管理的 MinGW 编译器，在 Linux 使用 `gcc`；共享兼容层源码在 Linux 上无害。由于此 Sail 版本没有官方 macOS 二进制资产，因此不支持 macOS。请通过下面的仓库命令运行，使工作流能够校验或安装 `.pixi/sail/`；它不会回退到系统 Sail 可执行文件。
-
-当 `PC` 到达汇编器记录的任一 `HALT` 地址，或离开已加载 ROM 时，执行结束。`HALT` 仍会展开成普通的两指令自循环，因此机器码保持为合法 Hack 代码；汇编器只是在元数据中额外记录循环地址。存在 `HALT` 时，可选步数限制用于超时失败；没有 `HALT` 时，步数限制配合断言表示有意的定步状态快照。
-
-## Sail Hook
-
-默认情况下，`hooks.sail` 会与 `hack.sail` 和生成的 driver 一起编译，因此 hook 与 ISA 运行在同一个 Sail/C 进程中，可直接读取或更新 `A`、`D`、`PC`、`RAM`。默认函数均为空。每个 hook 源文件都必须定义以下 API：
-
-| 函数 | 调用时机 |
-| --- | --- |
-| `hack_hook_before_run()` | 执行循环开始前，仅一次。 |
-| `hack_hook_before_step(step)` | 每条指令前；`step` 从零开始。 |
-| `hack_hook_after_step(step)` | 每条指令后；`step` 是从一开始的已完成指令数。 |
-| `hack_hook_after_run(steps)` | 源码断言通过后、最终状态输出前。 |
-
-Hook 可用于 trace、设备模型、覆盖率统计或额外 Sail 断言。源码 `.assert` 仍是程序的核心回归契约；Python 不负责求值 hook 或断言。
-
-使用 `.hook` 可为一个程序选择一个包内替代实现：
-
-```asm
-.hook hooks/trace.sail
-```
-
-路径必须是非空、安全、相对于包根目录的 POSIX `.sail` 路径。反斜杠会归一化为 `/`；绝对路径和 `..` 会被拒绝。自定义 `.hook` 会**替换** `hooks.sail`，不会与默认 hook 组合执行。
-
-## 源文件指令
-
-指令可以出现在普通 `.asm` 文件的任意位置，且不生成机器指令：
-
-```asm
-.hook hooks/trace.sail
-.assert R2 == 42
-.assert R6 < 0
-.assert signed(R6) >= -5
-.assert unsigned(R6) > 0x8000
-.assert PC <= 32767
-.max_steps 10_000
-```
-
-目标可为 `A`、`D`、`PC`、`R0` 至 `R15`，以及 `RAM[0]` 至 `RAM[32767]`。整数采用 Python 语法（`42`、`0x2A`、`0o52`、`0b101010`，也支持下划线）。
-
-| 语法 | 比较语义 | 右值范围 |
-| --- | --- | --- |
-| `.assert target == value` / `!=` | 精确比较架构位。负机器字字面量会归一化为 16 位，因此 `-1` 表示 `0xFFFF`。 | 机器字：`-32768..65535`；`PC`：`0..32767` |
-| `.assert target < value` / `<=` / `>` / `>=` | 普通机器字目标默认按有符号 16 位比较。 | `-32768..32767` |
-| `.assert signed(target) op value` | 显式按有符号 16 位进行关系比较。 | `-32768..32767` |
-| `.assert unsigned(target) op value` | 显式按无符号 16 位进行关系比较。 | `0..65535` |
-| `.assert PC op value` | 按无符号 15 位比较。接受并归一化 `unsigned(PC)`；拒绝 `signed(PC)`。 | `0..32767` |
-
-`op` 可以是 `==`、`!=`、`<`、`<=`、`>` 或 `>=`。机器字相等断言也接受包装器，但相等与不等始终按位精确比较，不会改为有符号或无符号数值比较。
-
-`.hook <relative .sail path>` 为可选项，且最多出现一次；它不生成机器字。未声明时，程序选择 `hooks.sail`。执行器会在重新加载生成的 `.hack` 产物后，只在 `isa/hack` 下解析所选源文件。
-
-`.max_steps <positive integer>` 为可选项，且最多出现一次。执行器的 `--max-steps` 会覆盖源文件值。存在已记录的 `HALT` 时，达到上限但尚未结束会失败；没有 `HALT` 时，上限就是要求的停止点，随后执行断言。当前内置程序都通过 `HALT` 终止，因此均不需要源文件步数限制。
-
-只有存在至少一条源文件断言时，执行器才输出 `ASSERT PASS`；无断言程序输出 `RUN COMPLETE`。使用 `--require-assertions` 可拒绝未声明断言的程序。
-
-## 带注释的 `.hack` 文件
-
-每条指令仍占一行，且每行恰好包含一个 16 位二进制机器字。人类可读的行内注释记录 ROM 地址、源码行号与原始源码；伪指令展开后还会显示对应的普通 Hack 指令：
-
-```text
-0000000000010001 // ROM[0000] L4: SET R0, 17 => @17
-1110110000010000 // ROM[0001] L4: SET R0, 17 => D=A
-```
-
-独立的结构化注释记录执行元数据：
-
-```text
-//%hack format {"version":3}
-//%hack hook {"path":"hooks/trace.sail"}
-//%hack halt {"address":42}
-//%hack assert {"line":55,"mode":"signed","operator":">=","target":"R2","value":42}
-//%hack max_steps {"value":1000}
-```
-
-`load_hack()` 会忽略空行与普通注释，严格校验每个机器字和结构化元数据记录，并返回机器字与元数据。没有注释的普通 `.hack` 文件仍可加载。
-
-## Hack+ 伪指令
-
-Hack+ 在汇编前展开成普通 Hack A/C 指令；它不会改变 ISA 或 Sail 语义。标准 Hack 汇编与下列形式可在同一个 `.asm` 文件中混用。
-
-| 伪指令 | 含义 |
-| --- | --- |
-| `SET target, value` | 将立即数或符号地址写入 RAM 的 `target`。 |
-| `INC target` / `DEC target` | 对 RAM 的 `target` 加一或减一。 |
-| `GOTO label` | 无条件跳转。 |
-| `JNZ`、`JGT`、`JEQ`、`JGE`、`JLT`、`JLE target, label` | 将 RAM 的 `target` 与零比较后条件跳转。 |
-| `HALT` | 生成私有自循环并记录其 ROM 地址。 |
-
-Hack 符号必须匹配 `[A-Za-z_.$:][A-Za-z0-9_.$:]*`。数字标签、非法标签及非法 A 指令符号会直接报错，不会被静默分配为变量。
-
-## 程序示例
-
-- `isa_conformance.asm` — 运行 Sail 层的 ALU、跳转、destination、A/M 选择、旧 `A` 与 PC 回绕检查。
-- `basic_alu.asm` — 算术、位运算、取负、目的寄存器写入与条件分支。
-- `multiply.asm` — 反复加法乘法（`6 * 7`）。
-- `divide.asm` — 反复减法整数除法（`100 / 7`）。
-- `fibonacci.asm` — 带循环控制的迭代 Fibonacci。
-- `gcd.asm` — 基于反复减法的欧几里得 GCD。
-
-每个程序末尾都有内联 `.assert` 指令，用于记录并检查预期状态。Python 汇编器测试还固定了全部官方 `comp`、`dest`、`jump` 编码，避免汇编表静默偏离 Hack 规范。
-
-## 直接命令
+## 快速命令
 
 在仓库根目录执行：
 
 ```sh
-pixi run just hack asm multiply
-pixi run just hack run multiply
-pixi run python isa/hack/tools/executor.py path/to/program.asm --output isa/hack/.build/program --max-steps 1000
-pixi run python -m pytest isa/hack/tests/test_assembler.py
+pixi run just hack list               # 列出 programs/*.asm
+pixi run just hack check              # 类型检查 hack.sail
+pixi run just hack asm multiply       # 生成带完整注释的 .build/multiply.hack
+pixi run just hack asm multiply summary
+pixi run just hack run multiply none  # 不生成解释性注释
+pixi run just hack test               # 单元测试 + 所有程序端到端测试
+pixi run just hack clean              # 删除生成产物
 ```
 
-前两条命令通过 Hack 模块及包内清单选择程序；直接调用 executor 适合执行未登记到清单的汇编文件。
+## 模块地图
+
+| 路径 | 用途 |
+| --- | --- |
+| `hack.sail` | A/C 解码、ALU、寄存器、RAM 和 PC 状态转换 |
+| `programs/*.asm` | 可运行示例与端到端回归程序 |
+| `tools/assembler.py` | 标准 Hack 汇编、Hack+ 降级和 `.hack` 读写 |
+| `tools/executor.py` | Driver 生成、Sail C 后端编译和执行 |
+| `tools/workflow.py` | 程序发现与命令分派 |
+| `hooks.sail` / `hooks/` | 默认及可选执行 Hook |
+| `tests/` | 汇编器、executor、workflow 和 Sail 一致性测试 |
+| `.build/` | Git 忽略的机器码、driver、C 和可执行产物 |
+
+## 生成产物的注释级别
+
+`asm` 和 `run` 接受一个可选注释级别。默认使用 `full`，因为生成产物本身也是教学界面：
+
+| 级别 | `.hack` 机器字 | 生成的 `.driver.sail` |
+| --- | --- | --- |
+| `none` | 不添加解释性机器字注释 | 不添加解释性注释 |
+| `summary` | ROM 地址和原始源码行号 | 阶段说明和简要逐 ROM 映射 |
+| `full` | ROM 地址、源码文本和 Hack+ 展开 | 阶段说明、完整逐 ROM 映射、断言来源和输出语义 |
+
+示例：
+
+```sh
+pixi run just hack asm multiply summary
+pixi run just hack run multiply full
+```
+
+机器可读的 `//%hack` metadata 始终保留，`none` 也不例外；executor 依赖其中的断言、HALT 地址、Hook 和步数限制。Driver 注释来自重新加载的 `.hack`，而不是汇编器中未写入文件的隐藏状态。
+
+## 程序源码格式
+
+Workflow 按文件名顺序发现 `programs/*.asm` 直属文件，文件名 stem 就是命令行程序名。内置程序需要一条非空说明和至少一条断言：
+
+```asm
+.description Repeated-addition multiplication: 6 times 7
+
+SET R0, 6
+SET R1, 7
+// ...
+HALT
+
+.assert R2 == 42
+```
+
+`.description` 只供 `hack list` 使用；它不生成机器字，不进入 `AssemblyMetadata`，也不写入 `.hack`。
+
+新增程序：
+
+1. 新建 `programs/<name>.asm`；
+2. 添加一条 `.description ...`；
+3. 添加一条或多条 `.assert` 契约；
+4. 执行 `pixi run just hack run <name>`；
+5. 执行 `pixi run just hack test`。
+
+## `.assert` 怎样使用
+
+断言描述预期架构状态，不增加机器指令。通常放在 `HALT` 之后：
+
+```asm
+.description Assertion example
+@1
+D=A
+HALT
+
+.assert D == 1
+.assert A != 0
+.assert signed(R0) >= -5
+.assert unsigned(R1) <= 0xFFFF
+.assert PC == 2
+```
+
+可断言目标：
+
+```text
+A  D  PC  R0..R15  RAM[0]..RAM[32767]
+```
+
+支持 `==`、`!=`、`<`、`<=`、`>`、`>=`。相等比较按位精确判断；普通 16 位目标的关系比较默认按有符号数解释，`signed(...)` 和 `unsigned(...)` 可以显式选择模式。`PC` 始终是无符号 15 位。
+
+| 语法 | 语义 | 右值范围 |
+| --- | --- | --- |
+| `.assert target == value` / `!=` | 位精确比较 | 机器字：`-32768..65535`；`PC`：`0..32767` |
+| `.assert target < value` 等 | 默认有符号 16 位关系比较 | `-32768..32767` |
+| `.assert signed(target) op value` | 显式有符号关系比较 | `-32768..32767` |
+| `.assert unsigned(target) op value` | 显式无符号关系比较 | `0..65535` |
+| `.assert PC op value` | 无符号 15 位关系比较 | `0..32767` |
+
+### 成功
+
+全部断言通过时，可执行程序输出：
+
+```text
+ASSERT PASS
+A  = ...
+D  = ...
+PC = ...
+R0 = ...
+```
+
+真正决定成功的是 Sail 断言和进程退出状态；寄存器 dump 用于诊断和观察。
+
+### 失败
+
+把示例改成 `.assert D == 2` 后，会看到类似：
+
+```text
+Assertion failed: assertion D == 0x0002 from source line 6 failed
+```
+
+生成程序以状态 `1` 退出，因此 `hack run` 和 `hack test` 都会失败。行号指向原始 `.asm` 源码。
+
+普通 `run` 允许程序没有断言，成功时输出 `RUN COMPLETE`。`hack test` 要求每个已发现程序都包含断言，避免示例只执行却不检查结果。
+
+## 其他源码指令
+
+```asm
+.hook hooks/trace.sail
+.max_steps 10_000
+```
+
+- `.hook` 选择一个包内相对 `.sail` Hook；绝对路径和 `..` 会被拒绝。
+- `.max_steps` 在存在 `HALT` 时作为超时保护；程序有意不使用 `HALT` 时，可定义定步状态快照。
+- 点指令不生成机器字；断言、HALT 地址、Hook 和步数限制会进入执行 metadata。
+
+## Hack+ 伪指令
+
+| 语法 | 标准 Hack 效果 |
+| --- | --- |
+| `SET target, value` | 把立即数或符号地址写入 `RAM[target]` |
+| `INC target` / `DEC target` | 递增或递减内存 |
+| `GOTO label` | 无条件跳转 |
+| `JNZ/JGT/JEQ/JGE/JLT/JLE target, label` | 读取 `RAM[target]` 后条件跳转 |
+| `HALT` | 生成私有两指令自循环并记录结束地址 |
+
+Hack+ 在收集标签前全部降级为标准 Hack A/C 指令，不扩展 ISA。完整展开和寄存器副作用见 [Hack+ 降级](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa#hack-如何降级为正式指令)。
+
+## Sail Hook API
+
+选中的 Hook 定义：
+
+| 函数 | 调用时机 |
+| --- | --- |
+| `hack_hook_before_run()` | 执行前一次 |
+| `hack_hook_before_step(step)` | 每条指令之前 |
+| `hack_hook_after_step(step)` | 每条指令之后 |
+| `hack_hook_after_run(steps)` | 断言通过后、最终输出前 |
+
+Hook 与 `hack.sail` 和生成 driver 运行在同一个 Sail/C 进程中，可以读写 `A`、`D`、`PC` 和 `RAM`。自定义 Hook 会替换默认 `hooks.sail`。
+
+## 学习实现
+
+1. [运行并观察第一个程序](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/tutorial)。
+2. [理解 Hack 的机器契约](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa)。
+3. [跟踪解析、降级和两遍汇编](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/assembler)。
+4. [跟踪 driver、本机执行和测试](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/execution)。

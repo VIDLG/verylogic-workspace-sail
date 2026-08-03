@@ -1,3 +1,4 @@
+.description ALU arithmetic, bitwise operations, negation, and conditional branch
 // Basic ALU and branch coverage.
 // R0=17, R1=5.
 // Expected: A=7, D=1, PC=51; R2=22, R3=12, R4=1, R5=21, R6=-5, R7=1.

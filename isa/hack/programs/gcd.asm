@@ -1,3 +1,4 @@
+.description Subtraction-based Euclidean GCD of 1071 and 462
 // Hack+ program: Euclidean GCD by repeated subtraction.
 // Input values R0=1071 and R1=462; output R2=21.
 SET R0, 1071

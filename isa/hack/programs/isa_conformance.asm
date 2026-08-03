@@ -1,3 +1,4 @@
+.description Direct Sail checks for ALU, jumps, destinations, and state transitions
 // Runs direct Sail-level ALU, jump, destination, and state-transition checks.
 .hook tests/isa_conformance.sail
 

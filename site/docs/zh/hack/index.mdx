@@ -1,0 +1,53 @@
+---
+title: Hack 概览
+---
+
+# 用 Sail 实现 Hack
+
+Hack 是 nand2tetris 使用的 16 位教学计算机。这个模块把它的指令集规范写成可执行 Sail 模型，并配套汇编器、示例程序、源码断言和回归测试。
+
+## 先运行一次
+
+克隆仓库，进入根目录，然后执行：
+
+```sh
+git clone https://github.com/VIDLG/verylogic-workspace-sail.git
+cd verylogic-workspace-sail
+pixi run just hack list
+pixi run just hack run multiply
+```
+
+程序成功时会输出 `ASSERT PASS` 和架构状态。[入门教程](/zh/hack/tutorial)会解释这些输出，并沿着同一个程序走完整条工具链。
+
+## 按目标选择文档
+
+| 想理解什么 | 阅读 |
+| --- | --- |
+| Hack、nand2tetris、NandGame 和 Sail 的关系，以及第一次运行 | [入门教程](/zh/hack/tutorial) |
+| 寄存器、内存、指令位、ALU 运算和跳转 | [ISA 指南](/zh/hack/isa) |
+| 符号、Hack+ 降级、两遍汇编和 `.hack` 输出 | [汇编器内部原理](/zh/hack/assembler) |
+| 生成 driver、Sail C 后端、断言、Hook 和测试 | [执行器与测试](/zh/hack/execution) |
+| 精确命令、源码指令和产物注释级别 | [Hack 包参考](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md) |
+
+## 一个程序的完整路径
+
+```mermaid
+flowchart TD
+    Source[programs/name.asm] --> Assembler[assembler.py]
+    Assembler --> Machine[带注释的 .hack]
+    Machine --> Executor[executor.py]
+    Executor --> Driver[带注释的 driver.sail]
+    Driver --> Sail[hack.sail + hook]
+    Sail --> C[Sail C 后端]
+    C --> Native[本机可执行程序]
+    Native --> Assertions[Sail 断言]
+```
+
+`hack.sail` 定义机器契约；assembler 翻译源码；executor 生成 driver 并完成本机编译；workflow 负责程序发现和命令分派。
+
+## 建议学习顺序
+
+1. 完成[入门教程](/zh/hack/tutorial)，并查看 `multiply.asm`。
+2. 对照 `hack.sail` 阅读 [ISA 指南](/zh/hack/isa)。
+3. 进入**工具链内部原理**，沿同一份源码继续阅读[汇编器](/zh/hack/assembler)。
+4. 最后阅读[执行器与测试工作流](/zh/hack/execution)。

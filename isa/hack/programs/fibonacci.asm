@@ -1,3 +1,4 @@
+.description Iterative Fibonacci F(10) with loop control
 // Hack+ program: calculate F(10) iteratively.
 // R0 = N, R1 = current Fibonacci number, R2 = next number, R3 = iteration.
 SET R0, 10

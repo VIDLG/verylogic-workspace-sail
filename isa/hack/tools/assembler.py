@@ -42,6 +42,7 @@ ASSERT_RE = re.compile(
 )
 MAX_STEPS_RE = re.compile(r"\.max_steps\s+(?P<value>\S+)\s*")
 HOOK_RE = re.compile(r"\.hook\s+(?P<path>\S+)\s*")
+DESCRIPTION_RE = re.compile(r"\.description\s+(?P<text>.+?)\s*")
 DEFAULT_HOOK_PATH = "hooks.sail"
 ASSERT_TARGET_RE = re.compile(r"A|D|PC|R(?:[0-9]|1[0-5])|RAM\[\s*(?:0|[1-9][0-9]*)\s*\]")
 ASSERT_WRAPPER_RE = re.compile(r"(?P<mode>signed|unsigned)\s*\(\s*(?P<target>.*?)\s*\)")
@@ -63,8 +64,9 @@ PSEUDO_PATTERNS = {
     "JLE": re.compile(r"JLE\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
     "HALT": re.compile(r"HALT", re.IGNORECASE),
 }
-HACK_WORD_RE = re.compile(r"\s*(?P<word>[01]{16})(?:\s+//.*)?\s*")
+HACK_WORD_RE = re.compile(r"\s*(?P<word>[01]{16})(?:\s+//\s*(?P<comment>.*?))?\s*")
 METADATA_RE = re.compile(r"//%hack\s+(?P<kind>[a-z_]+)\s+(?P<payload>\{.*\})\s*")
+COMMENT_LEVELS = ("none", "summary", "full")
 
 
 class AssemblyError(ValueError):
@@ -130,7 +132,13 @@ class HookDirective:
     path: str
 
 
-Statement: TypeAlias = AInstruction | CInstruction | Label | PseudoInstruction | AssertionDirective | MaxStepsDirective | HookDirective
+@dataclass(frozen=True)
+class DescriptionDirective:
+    source: SourceLine
+    text: str
+
+
+Statement: TypeAlias = AInstruction | CInstruction | Label | PseudoInstruction | AssertionDirective | MaxStepsDirective | HookDirective | DescriptionDirective
 Instruction: TypeAlias = AInstruction | CInstruction
 
 
@@ -172,6 +180,7 @@ class AssemblyResult:
 class LoadedHack:
     words: list[int]
     metadata: AssemblyMetadata
+    word_comments: tuple[str | None, ...] = ()
 
 
 class Parser:
@@ -179,12 +188,20 @@ class Parser:
         statements: list[Statement] = []
         seen_max_steps = False
         seen_hook = False
+        seen_description = False
         for line_number, raw in enumerate(text.splitlines(), start=1):
             code = raw.split("//", maxsplit=1)[0].strip()
             if not code:
                 continue
             source = SourceLine(line_number, raw)
 
+            if code.startswith(".description"):
+                if seen_description:
+                    raise AssemblyError(line_number, "duplicate .description directive")
+                statement = self._parse_description(code, source)
+                seen_description = True
+                statements.append(statement)
+                continue
             if code.startswith(".assert"):
                 statements.append(self._parse_assertion(code, source))
                 continue
@@ -223,6 +240,12 @@ class Parser:
 
             statements.append(self._parse_instruction(code, source))
         return statements
+
+    def _parse_description(self, code: str, source: SourceLine) -> DescriptionDirective:
+        match = DESCRIPTION_RE.fullmatch(code)
+        if match is None:
+            raise AssemblyError(source.line, "expected .description <nonempty text>")
+        return DescriptionDirective(source, match.group("text"))
 
     def _parse_assertion(self, code: str, source: SourceLine) -> AssertionDirective:
         match = ASSERT_RE.fullmatch(code)
@@ -369,6 +392,13 @@ def parse(text: str) -> list[Statement]:
     return Parser().parse(text)
 
 
+def source_description(text: str) -> str | None:
+    for statement in parse(text):
+        if isinstance(statement, DescriptionDirective):
+            return statement.text
+    return None
+
+
 def _expanded_instruction(parser: Parser, source: SourceLine, text: str) -> Instruction:
     return parser._parse_instruction(text, source, expanded=text)
 
@@ -389,6 +419,8 @@ def expand(statements: list[Statement]) -> tuple[list[Instruction | Label], list
             max_steps = statement
         elif isinstance(statement, HookDirective):
             hook = statement
+        elif isinstance(statement, DescriptionDirective):
+            continue
         elif not isinstance(statement, PseudoInstruction):
             code.append(statement)
         else:
@@ -477,7 +509,14 @@ def _metadata_comment(kind: str, payload: dict[str, int | str]) -> str:
     return f"//%hack {kind} {json.dumps(payload, separators=(',', ':'), sort_keys=True)}\n"
 
 
-def write_hack(assembly: AssemblyResult, path: Path) -> None:
+def validate_comment_level(value: str) -> str:
+    if value not in COMMENT_LEVELS:
+        raise ValueError(f"comment level must be one of {', '.join(COMMENT_LEVELS)}")
+    return value
+
+
+def write_hack(assembly: AssemblyResult, path: Path, comments: str = "full") -> None:
+    comments = validate_comment_level(comments)
     hook_path = normalize_hook_path(assembly.metadata.hook_path)
     lines = [
         _metadata_comment("format", {"version": 3}),
@@ -500,10 +539,15 @@ def write_hack(assembly: AssemblyResult, path: Path) -> None:
     if assembly.metadata.max_steps is not None:
         lines.append(_metadata_comment("max_steps", {"value": assembly.metadata.max_steps}))
     for address, record in enumerate(assembly.records):
-        mapping = f"ROM[{address:04d}] L{record.source.line}: {record.source.text.strip()}"
-        if record.expanded is not None:
-            mapping += f" => {record.expanded}"
-        lines.append(f"{record.value:016b} // {mapping}\n")
+        suffix = ""
+        if comments == "summary":
+            suffix = f" // ROM[{address:04d}] L{record.source.line}"
+        elif comments == "full":
+            mapping = f"ROM[{address:04d}] L{record.source.line}: {record.source.text.strip()}"
+            if record.expanded is not None:
+                mapping += f" => {record.expanded}"
+            suffix = f" // {mapping}"
+        lines.append(f"{record.value:016b}{suffix}\n")
     path.write_text("".join(lines), encoding="utf-8")
 
 
@@ -527,6 +571,7 @@ def _exact_keys(path: Path, line_number: int, value: dict[str, object], keys: se
 
 def load_hack(path: Path) -> LoadedHack:
     words: list[int] = []
+    word_comments: list[str | None] = []
     halts: list[int] = []
     assertions: list[Assertion] = []
     max_steps: int | None = None
@@ -628,6 +673,7 @@ def load_hack(path: Path) -> LoadedHack:
             raise ValueError(f"{path}:{line_number}: expected a 16-bit binary word or comment")
         words_started = True
         words.append(int(word_match.group("word"), 2))
+        word_comments.append(word_match.group("comment"))
         if len(words) > 32768:
             raise ValueError(f"{path}:{line_number}: program exceeds the 32768-word Hack ROM")
 
@@ -640,13 +686,23 @@ def load_hack(path: Path) -> LoadedHack:
             raise ValueError(f"{path}: halt address {address} is outside the {len(words)}-word ROM")
         if words[address] != address or words[address + 1] != halt_jump:
             raise ValueError(f"{path}: halt address {address} does not point to an @address; 0;JMP self-loop")
-    return LoadedHack(words, AssemblyMetadata(tuple(halts), tuple(assertions), max_steps, hook_path or DEFAULT_HOOK_PATH))
+    return LoadedHack(
+        words,
+        AssemblyMetadata(tuple(halts), tuple(assertions), max_steps, hook_path or DEFAULT_HOOK_PATH),
+        tuple(word_comments),
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Assemble a Hack .asm program into annotated .hack machine code")
     _ = parser.add_argument("source", type=Path)
     _ = parser.add_argument("-o", "--output", type=Path, required=True)
+    _ = parser.add_argument(
+        "--comments",
+        choices=COMMENT_LEVELS,
+        default="full",
+        help="explanatory artifact comments: none, summary, or full (default)",
+    )
     args = parser.parse_args()
 
     try:
@@ -654,7 +710,7 @@ def main() -> int:
         output = Path(args.output)
         assembly = assemble(source)
         output.parent.mkdir(parents=True, exist_ok=True)
-        write_hack(assembly, output)
+        write_hack(assembly, output, args.comments)
     except (AssemblyError, OSError, ValueError) as error:
         parser.error(str(error))
 
