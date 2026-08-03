@@ -1,6 +1,6 @@
 # The Hack ISA, Executed with Sail
 
-[中文教程](README.zh-CN.md) · [Hack package reference](isa/hack/README.md)
+[中文教程](README.zh-CN.md) · [Hack ISA guide](isa/hack/ISA.md) · [Hack package reference](isa/hack/README.md)
 
 This is an executable, educational model of the [Hack](https://www.nand2tetris.org/) instruction set. It describes Hack's instruction encoding, ALU, registers, memory, and control flow in [Sail](https://github.com/rems-project/sail), then uses Sail's C backend to run real Hack assembly programs.
 
@@ -58,7 +58,7 @@ pixi run just hack run multiply
 
 The repository pins Sail `0.20.2` under the Git-ignored `.pixi/sail/`; it never relies on an arbitrary Sail executable from the system `PATH`. Supported hosts are Windows AMD64, Linux x86_64, and Linux aarch64. This pinned release has no official macOS binary asset, so the current workflow does not support macOS.
 
-Pixi also supplies Python, Pytest, Just, GCC or MinGW GCC, and GMP. If the Sail download requires a proxy, set the standard proxy environment variable only in the current shell rather than committing it to project configuration.
+Pixi also supplies Python, Pytest, Just, GCC or MinGW GCC, and GMP.
 
 ## First program: multiply 6 by 7
 
@@ -84,7 +84,23 @@ HALT
 .assert R2 == 42
 ```
 
-`SET`, `JEQ target, label`, `DEC`, `GOTO`, and `HALT` are **Hack+ pseudoinstructions** supplied by this repository's assembler. They expand entirely into standard Hack A/C instructions and do not extend the ISA defined in Sail. The final directive becomes an executable assertion; the run fails unless `R2` is exactly `42`.
+`SET`, `JEQ target, label`, `DEC`, `GOTO`, and `HALT` are **Hack+ pseudoinstructions** supplied by this repository's assembler. The assembler replaces them with standard Hack instructions before resolving labels and encoding machine words. For example:
+
+```asm
+// SET R0, 6
+@6
+D=A
+@R0
+M=D
+
+// JEQ R1, DONE
+@R1
+D=M
+@DONE
+D;JEQ
+```
+
+Pseudoinstructions are therefore assembly conveniences, not additions to the ISA modeled in Sail. See [How Hack+ lowers to real instructions](isa/hack/ISA.md#how-hack-lowers-to-real-instructions) for every expansion and its register side effects. The final `.assert` directive becomes an executable Sail check; the run fails unless `R2` is exactly `42`.
 
 Assemble without running to inspect the result:
 

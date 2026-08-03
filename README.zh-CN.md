@@ -1,6 +1,6 @@
 # 用 Sail 实现 Hack 指令集
 
-[English](README.md) · [Hack 包参考手册](isa/hack/README.zh-CN.md)
+[English](README.md) · [Hack ISA 详解](isa/hack/ISA.zh-CN.md) · [Hack 包参考手册](isa/hack/README.zh-CN.md)
 
 这是一个面向学习的、可执行的 [Hack](https://www.nand2tetris.org/) 指令集模型。项目用 [Sail](https://github.com/rems-project/sail) 描述 Hack CPU 的指令编码、ALU、寄存器、内存与控制流，再通过 Sail 的 C 后端把汇编程序编译成可运行程序。
 
@@ -70,13 +70,6 @@ pixi run just hack check
 
 这个固定版本没有官方 macOS 二进制资产，因此当前工作流不支持 macOS。Pixi 还会提供 Python、Pytest、Just、GCC/MinGW GCC 和 GMP。
 
-如果下载 Sail 需要代理，只给当前终端设置标准代理环境变量，不要把代理地址或凭据提交到项目配置。例如 PowerShell：
-
-```powershell
-$env:HTTPS_PROXY = "http://127.0.0.1:7897"
-pixi run just install
-```
-
 ### 2. 运行第一个 Hack 程序
 
 ```sh
@@ -106,7 +99,23 @@ HALT
 .assert R2 == 42
 ```
 
-`SET`、`JEQ target, label`、`DEC`、`GOTO` 和 `HALT` 是仓库汇编器提供的 **Hack+ 伪指令**。它们最终全部展开为标准 Hack A/C 指令，不会扩展 Sail 中定义的 ISA。最后一行断言由执行链转成 Sail 检查；结果不等于 `42` 时，程序会失败。
+`SET`、`JEQ target, label`、`DEC`、`GOTO` 和 `HALT` 是仓库汇编器提供的 **Hack+ 伪指令**。汇编器先把它们替换成标准 Hack 指令，再进行标签解析与机器码编码。例如：
+
+```asm
+// SET R0, 6
+@6
+D=A
+@R0
+M=D
+
+// JEQ R1, DONE
+@R1
+D=M
+@DONE
+D;JEQ
+```
+
+所以伪指令只是汇编层的便捷写法，不会扩展 Sail 中定义的 ISA。全部展开规则及其对 `A`、`D` 的影响见 [Hack ISA 详解：Hack+ 如何降级](isa/hack/ISA.zh-CN.md#hack-如何降级为正式指令)。最后一行 `.assert` 由执行链转成 Sail 检查；结果不等于 `42` 时，程序会失败。
 
 ### 3. 查看真正执行的机器码
 

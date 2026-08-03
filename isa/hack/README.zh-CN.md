@@ -1,11 +1,12 @@
-# Hack 指令集
+# Hack 包参考手册
 
-[English](README.md)
+[English](README.md) · [Hack ISA 详解](ISA.zh-CN.md) · [项目教程](../../README.zh-CN.md)
 
 这是 nand2tetris Hack CPU 的自包含 Sail 包。`nand2tetris` 是课程名；**Hack** 才是 CPU 与 ISA 的名称。
 
 ## 内容
 
+- `ISA.zh-CN.md` — Hack ISA、正式指令编码、执行语义及 Hack+ 降级规则。
 - `hack.sail` — 可执行的 ISA 语义：编码、ALU、寄存器、RAM 与控制流；不包含具体程序的 `main()`。
 - `justfile` — 包内命令接口，在根目录中作为 `hack` 模块导入。
 - `tools/assembler.py` — 无第三方依赖的两遍 Hack 汇编器，包含小型类型化解析器、Hack+ 伪指令、源文件指令与带注释的 `.hack` 读写。
