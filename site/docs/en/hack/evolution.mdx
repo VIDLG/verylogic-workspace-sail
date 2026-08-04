@@ -58,6 +58,19 @@ pixi run just hack run multiply full
 
 This distinction prevents a common mistake: making the parser accept a mnemonic and calling it a new instruction even though neither the encoding nor Sail execution semantics changed.
 
+## Modify in place, or create a derived machine?
+
+The right choice depends on whether the experiment must **coexist long-term** with standard Hack:
+
+- **A personal branch or class exercise:** modify `isa/hack/` directly. This is the shortest path and makes the complete change surface easy to observe. Create a branch first and keep the standard regression suite as the compatibility baseline.
+- **Tooling that still emits standard Hack words:** implement it in the existing module. New pseudoinstructions, traces, and diagnostics should preserve default behavior; enable experimental behavior through explicit syntax, a Hook, or an option.
+- **A platform experiment:** prefer a separate Hook, driver option, or named recipe so the same standard ISA can run in different teaching environments. Consider a separate package only after the platform becomes a durable product.
+- **A real ISA change that will be committed and maintained:** do not silently redefine nand2tetris Hack in `isa/hack/hack.sail`. Name the machine, such as `HackShift` or `Hack32`, and create a sibling module such as `isa/hack32/` with its own Sail model, assembler, programs, tests, README, artifact identity, and root command.
+
+Standard Hack currently has one small Sail file, so this workspace does not preemptively copy the RISC-V profile registry for variants that do not exist. If two or more durable Hack derivatives eventually coexist and demonstrably share stable implementation, extract common assembler or executor helpers from that real duplication. Do not build an abstraction framework first and make every student experiment conform to it.
+
+In short: **an exercise may modify in place, the standard baseline must not be silently renamed, and a durable variant needs an identity.** Even a backward-compatible derived ISA should put its own name in metadata, commands, documentation, and test reports so its results cannot masquerade as standard Hack.
+
 ## A project ladder
 
 ### 1. Add one safe pseudoinstruction
