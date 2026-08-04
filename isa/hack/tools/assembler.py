@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TypeAlias
 
@@ -18,8 +18,9 @@ COMP = {
 }
 DEST = {"": "000", "M": "001", "D": "010", "MD": "011", "A": "100", "AM": "101", "AD": "110", "AMD": "111"}
 JUMP = {"": "000", "JGT": "001", "JEQ": "010", "JGE": "011", "JLT": "100", "JNE": "101", "JLE": "110", "JMP": "111"}
+REGISTER_SYMBOLS = {f"R{index}": index for index in range(16)}
 SYMBOLS = {
-    **{f"R{index}": index for index in range(16)},
+    **REGISTER_SYMBOLS,
     "SP": 0, "LCL": 1, "ARG": 2, "THIS": 3, "THAT": 4, "SCREEN": 16384, "KBD": 24576,
 }
 
@@ -43,20 +44,33 @@ ASSERT_RE = re.compile(
 MAX_STEPS_RE = re.compile(r"\.max_steps\s+(?P<value>\S+)\s*")
 HOOK_RE = re.compile(r"\.hook\s+(?P<path>\S+)\s*")
 DESCRIPTION_RE = re.compile(r"\.description\s+(?P<text>.+?)\s*")
-DEFAULT_HOOK_PATH = "hooks.sail"
+DEFAULT_HOOK_PATH = "hooks/default.sail"
 ASSERT_TARGET_RE = re.compile(r"A|D|PC|R(?:[0-9]|1[0-5])|RAM\[\s*(?:0|[1-9][0-9]*)\s*\]")
 ASSERT_WRAPPER_RE = re.compile(r"(?P<mode>signed|unsigned)\s*\(\s*(?P<target>.*?)\s*\)")
 EQUALITY_OPERATORS = {"==", "!="}
 RELATIONAL_OPERATORS = {"<", "<=", ">", ">="}
 ASSERTION_OPERATORS = EQUALITY_OPERATORS | RELATIONAL_OPERATORS
 ASSERTION_MODES = {"bits", "signed", "unsigned"}
-PSEUDO_NAMES = {"SET", "INC", "DEC", "GOTO", "JNZ", "JGT", "JEQ", "JGE", "JLT", "JLE", "HALT"}
+PSEUDO_NAMES = {
+    "SET", "MOV", "CLR", "INC", "DEC", "ADD", "SUB", "AND", "OR", "NEG", "NOT",
+    "NOP", "GOTO", "JNZ", "JNE", "JGT", "JEQ", "JGE", "JLT", "JLE", "HALT",
+}
 PSEUDO_PATTERNS = {
     "SET": re.compile(r"SET\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "MOV": re.compile(r"MOV\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "CLR": re.compile(r"CLR\s+(?P<first>[^,\s]+)", re.IGNORECASE),
     "INC": re.compile(r"INC\s+(?P<first>[^,\s]+)", re.IGNORECASE),
     "DEC": re.compile(r"DEC\s+(?P<first>[^,\s]+)", re.IGNORECASE),
+    "ADD": re.compile(r"ADD\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "SUB": re.compile(r"SUB\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "AND": re.compile(r"AND\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "OR": re.compile(r"OR\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "NEG": re.compile(r"NEG\s+(?P<first>[^,\s]+)", re.IGNORECASE),
+    "NOT": re.compile(r"NOT\s+(?P<first>[^,\s]+)", re.IGNORECASE),
+    "NOP": re.compile(r"NOP", re.IGNORECASE),
     "GOTO": re.compile(r"GOTO\s+(?P<first>[^,\s]+)", re.IGNORECASE),
     "JNZ": re.compile(r"JNZ\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
+    "JNE": re.compile(r"JNE\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
     "JGT": re.compile(r"JGT\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
     "JEQ": re.compile(r"JEQ\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
     "JGE": re.compile(r"JGE\s+(?P<first>[^,\s]+)\s*,\s*(?P<second>[^,\s]+)", re.IGNORECASE),
@@ -439,21 +453,35 @@ def expand(statements: list[Statement]) -> tuple[list[Instruction | Label], list
             args = statement.arguments
             if name == "SET":
                 expanded = [f"@{args[1]}", "D=A", f"@{args[0]}", "M=D"]
+            elif name == "MOV":
+                expanded = [f"@{args[1]}", "D=M", f"@{args[0]}", "M=D"]
+            elif name == "CLR":
+                expanded = [f"@{args[0]}", "M=0"]
             elif name == "INC":
                 expanded = [f"@{args[0]}", "M=M+1"]
             elif name == "DEC":
                 expanded = [f"@{args[0]}", "M=M-1"]
+            elif name in {"ADD", "SUB", "AND", "OR"}:
+                operation = {"ADD": "D+M", "SUB": "M-D", "AND": "D&M", "OR": "D|M"}[name]
+                expanded = [f"@{args[1]}", "D=M", f"@{args[0]}", f"M={operation}"]
+            elif name in {"NEG", "NOT"}:
+                operation = "-M" if name == "NEG" else "!M"
+                expanded = [f"@{args[0]}", f"M={operation}"]
+            elif name == "NOP":
+                expanded = ["0"]
             elif name == "GOTO":
                 expanded = [f"@{args[0]}", "0;JMP"]
-            elif name in {"JNZ", "JGT", "JEQ", "JGE", "JLT", "JLE"}:
-                jump = "JNE" if name == "JNZ" else name
+            elif name in {"JNZ", "JNE", "JGT", "JEQ", "JGE", "JLT", "JLE"}:
+                jump = "JNE" if name in {"JNZ", "JNE"} else name
                 expanded = [f"@{args[0]}", "D=M", f"@{args[1]}", f"D;{jump}"]
-            else:
+            elif name == "HALT":
                 label = f"__HACKPLUS_HALT_{halt_index}"
                 halt_index += 1
                 code.append(Label(statement.source, label))
                 halts.append((statement.source, label))
                 expanded = [f"@{label}", "0;JMP"]
+            else:
+                raise AssertionError(f"unhandled pseudoinstruction {name}")
             count = len(expanded)
             code.extend(
                 _expanded_instruction(parser, statement.source, text, index, count)
@@ -530,6 +558,25 @@ def validate_comment_level(value: str) -> str:
     return value
 
 
+def apply_runtime_overrides(
+    assembly: AssemblyResult,
+    *,
+    max_steps: int | None = None,
+    hook: str | None = None,
+) -> AssemblyResult:
+    if max_steps is not None and max_steps <= 0:
+        raise ValueError("--max-steps must be a positive integer")
+    metadata = assembly.metadata
+    return replace(
+        assembly,
+        metadata=replace(
+            metadata,
+            max_steps=metadata.max_steps if max_steps is None else max_steps,
+            hook_path=metadata.hook_path if hook is None else normalize_hook_path(hook),
+        ),
+    )
+
+
 def write_hack(assembly: AssemblyResult, path: Path, comments: str = "summary") -> None:
     comments = validate_comment_level(comments)
     hook_path = normalize_hook_path(assembly.metadata.hook_path)
@@ -556,11 +603,17 @@ def write_hack(assembly: AssemblyResult, path: Path, comments: str = "summary") 
     for address, record in enumerate(assembly.records):
         suffix = ""
         if comments == "summary":
+            source, separator, inline_comment = record.source.text.partition("//")
+            source = source.strip()
             mapping = f"ROM[{address:04d}] L{record.source.line}"
-            if record.expansion is not None:
-                source = record.source.text.split("//", maxsplit=1)[0].strip()
+            if record.expansion is None:
+                mapping += f" {source}"
+            else:
                 expansion = record.expansion
                 mapping += f" [{expansion.index}/{expansion.count}] {source} => {expansion.instruction}"
+            inline_comment = inline_comment.strip()
+            if separator and inline_comment:
+                mapping += f" // {inline_comment}"
             suffix = f" // {mapping}"
         elif comments == "full":
             mapping = f"ROM[{address:04d}] L{record.source.line}: {record.source.text.strip()}"
@@ -718,6 +771,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Assemble a Hack .asm program into annotated .hack machine code")
     _ = parser.add_argument("source", type=Path)
     _ = parser.add_argument("-o", "--output", type=Path, required=True)
+    _ = parser.add_argument("--max-steps", type=lambda value: int(value, 0), help="override source .max_steps metadata")
+    _ = parser.add_argument("--hook", help="override source .hook metadata")
     _ = parser.add_argument(
         "--comments",
         choices=COMMENT_LEVELS,
@@ -729,7 +784,11 @@ def main() -> int:
     try:
         source = Path(args.source)
         output = Path(args.output)
-        assembly = assemble(source)
+        assembly = apply_runtime_overrides(
+            assemble(source),
+            max_steps=args.max_steps,
+            hook=args.hook,
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         write_hack(assembly, output, args.comments)
     except (AssemblyError, OSError, ValueError) as error:

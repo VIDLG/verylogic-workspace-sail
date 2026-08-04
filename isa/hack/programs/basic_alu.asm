@@ -1,11 +1,12 @@
 .description ALU arithmetic, bitwise operations, negation, and conditional branch
 // Basic ALU and branch coverage.
-// R0=17, R1=5.
+// R0..R7 are standard assembler aliases for RAM[0]..RAM[7], not CPU registers.
+// Inputs: R0 (RAM[0]) = 17, R1 (RAM[1]) = 5.
 // Expected: A=7, D=1, PC=51; R2=22, R3=12, R4=1, R5=21, R6=-5, R7=1.
 .hook hooks/trace.sail
 
-SET R0, 17
-SET R1, 5
+SET R0, 17 // RAM[0] = 17
+SET R1, 5  // RAM[1] = 5
 
 @R0
 D=M

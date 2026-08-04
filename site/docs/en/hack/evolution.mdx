@@ -30,14 +30,16 @@ The default `summary` artifact shows every real instruction produced by the pseu
 Requesting `full` preserves the complete original line as well:
 
 ```text
-0000000000000110 // ROM[0000] L4: SET R0, 6 // multiplicand [1/4] => @6
+0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6 // multiplicand
 ```
 
-The generated driver receives the same mapping only after reloading the `.hack` file:
+Only after reloading the `.hack` file does the generated driver receive the same provenance on a raw ROM load:
 
 ```ocaml
-0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4 [1/4] SET R0, 6 => @6
+ROM[0] = 0b0000000000000110; // ROM[0000] L4 [1/4] SET R0, 6 => @6 // multiplicand
 ```
+
+The driver does not decode this word. `hack_step()` later fetches it from model-owned `ROM` and follows the Sail decode/execute path.
 
 Run these commands to inspect both forms:
 

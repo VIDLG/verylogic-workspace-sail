@@ -6,28 +6,60 @@ $include <string.sail>
 type word = bits(16)
 type address = bits(15)
 type program_counter = bits(15)
+type input_selector = bit
+type alu_control = bits(6)
+type destination_control = bits(3)
+type jump_control = bits(3)
 
 union instruction = {
-  AInstruction : address,                         // 0vvvvvvvvvvvvvvv
-  CInstruction : (bit, bits(6), bits(3), bits(3)) // 111accccccdddjjj
+  AInstruction : address,                                                        // 0vvvvvvvvvvvvvvv
+  CInstruction : (input_selector, alu_control, destination_control, jump_control) // 111accccccdddjjj
 }
 
-mapping encdec : instruction <-> bits(16) = {
-  AInstruction(address) <-> 0b0 @ address, // @value: load the A register
+mapping encdec : instruction <-> word = {
+  AInstruction(value) <-> 0b0 @ value,
   CInstruction(a, comp, dest, jump) <-> 0b111 @ a @ comp @ dest @ jump
-  // a: A/M input selector; comp: ALU function; dest: A/D/M write enables; jump: PC condition
 }
 
+union hack_decode_result = {
+  Decoded : instruction,
+  DecodeIllegal : word
+}
+
+union hack_execution_outcome = {
+  HackRetired : unit,
+  HackIllegalInstruction : word
+}
+
+function decode_hack(encoded : word) -> hack_decode_result = {
+  match encoded[15] {
+    0b0 => Decoded(encdec(encoded)),
+    0b1 => {
+      match encoded[14 .. 13] {
+        0b11 => Decoded(encdec(encoded)),
+        _ => DecodeIllegal(encoded) // 100/101/110 prefixes are not Hack instructions
+      }
+    }
+  }
+}
+
+function encode_hack(instr : instruction) -> word = encdec(instr)
+
+// The test-platform driver loads raw words before execution; instructions never modify ROM.
+register ROM : vector(32768, word) = vector_init(32768, 0x0000)
 register A : word = 0x0000
 register D : word = 0x0000
 register PC : program_counter = 0b000000000000000
+// Standard assembler symbols R0..R15 alias RAM[0]..RAM[15]; they are not separate registers.
 register RAM : vector(32768, word) = vector_init(32768, 0x0000)
+
+function fetch_hack(pc : program_counter) -> word = ROM[unsigned(pc)]
 
 function next_pc() -> program_counter = add_bits(PC, 0b000000000000001)
 
 function ram_address(value : word) -> address = value[14 .. 0]
 
-function alu(comp : bits(6), x : word, y : word) -> word = {
+function alu(comp : alu_control, x : word, y : word) -> word = {
   match comp {
     0b101010 => 0x0000,                 // 0
     0b111111 => 0x0001,                 // 1
@@ -50,7 +82,7 @@ function alu(comp : bits(6), x : word, y : word) -> word = {
   }
 }
 
-function should_jump(jump : bits(3), out : word) -> bool = {
+function should_jump(jump : jump_control, out : word) -> bool = {
   match jump {
     0b000 => false,                                                  // no jump
     0b001 => if out == 0x0000 then false else out[15] == 0b0,       // JGT
@@ -63,6 +95,7 @@ function should_jump(jump : bits(3), out : word) -> bool = {
   }
 }
 
+// Execute consumes an already-decoded instruction; decode_hack owns encoding legality.
 function execute(instr : instruction) -> unit = {
   match instr {
     AInstruction(value) => {
@@ -79,6 +112,18 @@ function execute(instr : instruction) -> unit = {
       if dest[0] == 0b1 then RAM[unsigned(ram_address(old_a))] = out else ();
       if should_jump(jump, out) then PC = ram_address(old_a) else PC = pc_after
     }
+  }
+}
+
+// This is the model's only raw-word execution path: fetch, decode, then execute.
+function hack_step() -> hack_execution_outcome = {
+  let encoded = fetch_hack(PC);
+  match decode_hack(encoded) {
+    Decoded(instr) => {
+      execute(instr);
+      HackRetired(())
+    },
+    DecodeIllegal(word) => HackIllegalInstruction(word)
   }
 }
 

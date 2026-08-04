@@ -8,11 +8,11 @@ This guide follows [`executor.py`](https://github.com/VIDLG/verylogic-workspace-
 
 | File | Responsible for | Not responsible for |
 | --- | --- | --- |
-| `hack.sail` | A/C instructions, ALU, registers, RAM, and PC transitions | ROM contents, a program-specific `main()`, test program discovery |
-| `executor.py` | Program driver generation, Sail/C compilation, execution, assertions | Program discovery and batch-test policy |
+| `hack.sail` | ROM storage, raw-word fetch, A/C decode, typed `hack_step()`, ALU, registers, RAM, and PC transitions | Loading a particular program image, a program-specific `main()`, test program discovery |
+| `executor.py` | Program driver generation, raw ROM loading, run control, Sail/C compilation, assertions, and output | A/C decoding, program discovery, and batch-test policy |
 | `workflow.py` | Source discovery and `check/assemble/run/test/clean` orchestration | ISA semantics and judging machine state itself |
 
-This split keeps `hack.sail` reusable as an ISA model. Running another Hack program requires another generated driver, not a change to CPU semantics.
+This split keeps `hack.sail` reusable as an ISA model. Running another Hack program requires another generated ROM loader and driver, not a change to fetch, decode, or CPU semantics.
 
 ```mermaid
 flowchart TD
@@ -26,42 +26,56 @@ flowchart TD
     Sail --> C[generated .c and .h]
     C --> Compiler[GCC or MinGW + Sail runtime + GMP]
     Compiler --> Native[native executable]
-    Native --> Result[hooks + execute loop + Sail assertions]
+    Native --> Result[ROM load + hooks + hack_step loop + Sail assertions]
 ```
 
 ## Why `hack.sail` has no `main()`
 
-The ISA answers how one decoded instruction changes architectural state. A runnable program must additionally define:
+The ISA owns the architectural ROM and answers how one step fetches a raw word, decodes it, and changes architectural state. A runnable program must additionally define:
 
-- which machine word occupies every ROM address;
-- which instruction corresponds to the current `PC`;
+- which raw machine words to load into ROM;
 - when execution is complete;
 - which hooks run around each step;
 - which final assertions to check;
 - which state to print.
 
-Those answers vary per program and do not belong in the ISA. `executor.write_driver()` generates a small Sail main program for each `.hack` artifact.
+Those program-specific answers do not belong in the ISA. `executor.write_driver()` generates a small Sail `main()` for each `.hack` artifact; it loads the image into model-owned `ROM`, then supplies run control around `hack_step()`.
 
-This resembles a real system boundary: a CPU core defines instruction behavior, while a loader or simulator supplies the program image and run control.
+This resembles a real system boundary: a CPU model defines storage, fetch, decode, and instruction behavior, while a loader or simulator supplies the program image and run-control policy.
 
 ## Full `executor.run()` sequence
 
 ```text
 1. Validate CLI arguments
 2. assemble(program) into AssemblyResult
-3. Resolve effective CLI/source max_steps
-4. Enforce assertion and full-ROM preconditions
-5. Remove stale artifacts with the same prefix
-6. write_hack() to <output>.hack
-7. Strictly reload it with load_hack()
-8. write_driver() to <output>.driver.sail
-9. Resolve the package-local hook from reloaded metadata
-10. Generate C with Sail
-11. Link with a C compiler, Sail runtime, and GMP
-12. Run the native executable
+3. Resolve effective CLI/source `max_steps` and Hook settings
+4. Apply CLI overrides to assembly metadata
+5. Enforce assertion and ROM-size preconditions
+6. Remove stale artifacts with the same prefix
+7. write_hack() to <output>.hack
+8. Strictly reload it with load_hack()
+9. write_driver() to <output>.driver.sail
+10. Resolve the package-local hook from reloaded metadata
+11. Generate C with Sail
+12. Link with a C compiler, Sail runtime, and GMP
+13. Run the native executable
 ```
 
-Steps 6 and 7 are the important design boundary. The executor does not pass an in-memory assembly object straight to driver generation; it forces data through the `.hack` artifact. See [Why `load_hack()` exists](/hack/assembler#why-load_hack-exists).
+Steps 7 and 8 are the important design boundary. Effective CLI overrides are first serialized into `.hack`; the executor does not pass an in-memory assembly object straight to driver generation. See [Why `load_hack()` exists](/hack/assembler#why-load_hack-exists).
+
+### Which settings belong on which surface
+
+| Concern | Source | CLI | Reason |
+| --- | --- | --- | --- |
+| Hook | `.hook` | `--hook` | Per-run runtime strategy |
+| Step budget | `.max_steps` | `--max-steps` | Per-run runtime strategy |
+| Description | `.description` | None | Source identity for discovery |
+| Checks | `.assert` | None | Source-owned regression contract |
+| Artifact comments | None | `--comments` | Host presentation only |
+| Output prefix | None | `--output` | Host filesystem policy |
+| Assertion requirement | None | `--require-assertions` | Workflow/test gate |
+
+Thus CLI coverage is intentional rather than mechanical: only runtime settings use `CLI > source > default`. CLI cannot silently replace source assertions or descriptions.
 
 ## Build artifacts
 
@@ -76,7 +90,7 @@ The executor can generate:
 | Artifact | Producer | Purpose |
 | --- | --- | --- |
 | `multiply.hack` | `write_hack()` | Stable machine-word and metadata boundary |
-| `multiply.driver.sail` | `write_driver()` | Program-specific ROM, loop, and assertions |
+| `multiply.driver.sail` | `write_driver()` | Program-specific ROM load lines, run control, assertions, and output |
 | `multiply.c` | Sail C backend | C implementation of ISA + hook + driver |
 | `multiply.h` | Sail C backend | Declarations for generated C |
 | `multiply.exe` on Windows or `multiply` on Linux | C compiler | Final native program |
@@ -105,45 +119,69 @@ There is no parser AST, symbol table, or hidden Python assembly state. Driver be
 
 `test_run_uses_hook_path_from_reloaded_metadata` specifically proves that hook selection comes from the **reloaded artifact**, not the earlier `AssemblyResult`.
 
-## How the driver represents ROM
+## How the driver loads model-owned ROM
 
-`write_driver()` turns each machine word into a Sail `match` arm:
+`hack.sail` owns the complete architectural instruction memory and raw fetch operation:
 
 ```ocaml
-function instruction_at(pc : program_counter) -> instruction = {
-  match pc {
-    0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4 [1/4] SET R0, 6 => @6
-    0b000000000000001 => encdec(0b1110110000010000), // ROM[0001] L4 [2/4] SET R0, 6 => D=A
-    // ...
-    _ => AInstruction(0b000000000000000)
-  }
+register ROM : vector(32768, word)
+
+function fetch_hack(pc : program_counter) -> word =
+  ROM[unsigned(pc)]
+```
+
+`fetch_hack(pc)` returns the raw 16-bit `word`; it does not decode it. The model's `hack_step()` composes the architectural path:
+
+```text
+fetch_hack(PC) -> decode_hack(word) -> execute(decoded instruction) -> typed step result
+```
+
+`write_driver()` no longer emits `instruction_at`, `execute_at`, or an address-to-decode `match`. It emits a `load_program()` function containing raw assignments instead:
+
+```ocaml
+function load_program() -> unit = {
+  ROM[0] = 0b0000000000000110; // ROM[0000] L4 [1/4] SET R0, 6 => @6
+  ROM[1] = 0b1110110000010000; // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+  // ...
 }
 ```
 
-This maps each ROM address directly as a 15-bit pattern and sends each 16-bit word through `hack.sail`'s `encdec` mapping. Python does not interpret A/C instructions; it only generates a ROM mapping. Sail still performs decoding and execution.
+Python only reloads words and writes these ROM load lines. It never decodes A- or C-instructions; legality, decode, and execution remain in Sail. `hack_step()` returns a typed result, and generated `main()` matches that result directly: a retired step continues, while an illegal encoding becomes an explicit driver assertion failure.
 
-The same `none / summary / full` level used for `.hack` controls driver comments. At the default `summary`, each ROM arm carries its address and source line, and Hack+ words also carry `[i/n] source => canonical`. `full` adds complete original source text and expands the explanations for assertion sources, hooks, and final output. These comments come from `LoadedHack.word_comments`, proving they survived the file boundary.
+The same `none / summary / full` level used for `.hack` controls driver comments. At the default `summary`, each `ROM[index] = word` line carries normalized assembly source, Hack+ words also carry `[i/n] source => canonical`, and inline assembly comments stay at the far right. `full` adds exact original source text and expands the explanations for assertion sources, hooks, and final output. These comments come from `LoadedHack.word_comments`, proving they survived the file boundary.
 
-The default arm makes the function total. Normal execution checks `execution_complete()` before fetching beyond loaded ROM.
+`load_program()` writes only the loaded image. Generated `main()` calls `execution_should_continue(PC, steps)` before each attempt, so it never calls `hack_step()` beyond the program's loaded ROM extent.
 
-## How the driver detects completion
+## How the driver stops and validates completion
 
-The generated function is conceptually:
+The generated driver centralizes the subtle run condition in one small function:
 
 ```ocaml
-function execution_complete(pc : program_counter) -> bool = {
-  match pc {
-    HALT_ADDRESS_0 => true,
-    HALT_ADDRESS_1 => true,
-    _ => unsigned(pc) >= ROM_LENGTH
-  }
+let lowered_halt_0 : program_counter = 0b000000000110011
+let driver_max_steps : int = 100000
+
+function execution_should_continue(pc : program_counter, steps : int) -> bool = {
+  (pc != lowered_halt_0)
+  & unsigned(pc) < loaded_rom_words
+  & steps < driver_max_steps
 }
 ```
 
-Execution completes when either:
+The loop itself stays direct:
 
-1. `PC` reaches a HALT address recorded in `.hack` metadata;
-2. `PC` leaves the loaded ROM.
+```ocaml
+while execution_should_continue(PC, steps) {
+  // one checked hack_step
+}
+```
+
+`loaded_rom_words` is generated from the reloaded artifact's word count—for `basic_alu` it is `53`, covering ROM addresses `0..52`. It is not `max_steps` and does not limit how many times a loop may revisit those addresses. Each `lowered_halt_n` value is generated from a reloaded `//%hack halt {"address": ...}` metadata record; the bit pattern has no special meaning in the Hack ISA.
+
+The condition becomes false in three cases, which the driver distinguishes after the loop:
+
+1. `PC` reaches a HALT address recorded in `.hack` metadata: valid completion;
+2. `PC` leaves the loaded ROM image: explicit execution error;
+3. `steps` reaches `driver_max_steps`: valid only for an explicitly requested bounded snapshot, otherwise watchdog failure.
 
 ### Why the HALT loop does not execute here
 
@@ -157,66 +195,72 @@ Hack+ `HALT` lowers to:
 
 Metadata records the private-label address. The driver sees completion when `PC` reaches that address and exits before executing the loop. The two loop words remain in `.hack`, so the artifact is still a legal native Hack program that would stay in its self-loop.
 
+This is deliberately driver policy. Standard Hack has no encoded HALT instruction: Hack+ `HALT` is an assembler convenience, ROM end comes from the loaded artifact, and neither is an architectural outcome from `hack.sail`. If the ISA later gains a real HALT opcode, decoding and returning that outcome would belong in the model.
+
 ### The 32768-word ROM edge case
 
-`PC` is 15 bits and cannot exceed `32767`. For a completely full 32768-word ROM, `PC >= ROM_LENGTH` can never become true. The executor therefore requires such a program to have either:
+`PC` is 15 bits and cannot exceed `32767`. For a completely full 32768-word image, `PC >= loaded_rom_words` can never become true: there is no representable “one past the ROM” address. A recorded `HALT` can complete such a program normally; otherwise the explicit or default step budget still bounds the host run and fails as a watchdog unless the source explicitly requests a bounded snapshot.
 
-- a recorded `HALT`; or
-- `max_steps`.
+## Generated run loop
 
-There is no representable “one past the ROM” address in this case.
-
-## Main execution loop
-
-Without a step limit, the generated driver contains:
+The generated `main()` first calls `load_program()`. Its run-control sequence is conceptually:
 
 ```ocaml
+load_program();
 var steps : int = 0;
 hack_hook_before_run();
-while execution_complete(PC) == false {
+while execution_should_continue(PC, steps) {
   hack_hook_before_step(steps);
-  execute(instruction_at(PC));
+  match hack_step() {
+    HackRetired(()) => (),
+    HackIllegalInstruction(_) => assert(false, "illegal Hack instruction encoding")
+  };
   steps = steps + 1;
   hack_hook_after_step(steps)
 };
+assert (unsigned(PC) < loaded_rom_words,
+        "program counter left the loaded ROM image");
 // assertions
 hack_hook_after_run(steps);
 ```
+
+The inline `match` returns on `HackRetired(())` and asserts on `HackIllegalInstruction(_)`. Fetch, decode, and execute remain one model-owned `hack_step()`; generated `main()` only turns its typed result into driver policy.
 
 The ordering contract is:
 
 | Point | Meaning of `step` |
 | --- | --- |
-| `before_run()` | Before entering the loop |
+| `load_program()` | Populate model-owned `ROM` before execution |
+| `before_run()` | Before entering the run loop |
 | `before_step(steps)` | Next instruction index, zero-based |
-| `execute(...)` | ISA transition from `hack.sail` |
+| inline `match hack_step()` | Check the result of the model-owned fetch → decode → execute transition |
 | `steps = steps + 1` | Increment completed instruction count |
 | `after_step(steps)` | One-based completed count |
 | source assertions | Core regression contract after the loop |
 | `after_run(steps)` | Called only after source assertions pass |
 
-[`test_hook_call_order_preserves_core_assertions`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/test_executor.py) fixes this contract by checking source order in the generated driver.
+The executor component tests fix this contract by checking source order in the generated driver.
 
 ## Two meanings of `max_steps`
 
 The effective limit has this precedence:
 
 ```text
-CLI --max-steps > source .max_steps > no limit
+CLI --max-steps > source .max_steps > default watchdog (100000)
 ```
 
-With a limit, the loop additionally requires `steps < limit`.
+A CLI value replaces source `.max_steps` in the generated `.hack` metadata before strict reload. The generator then emits `driver_max_steps` from reloaded metadata, or uses the default for normal executor runs; `execution_should_continue` requires `steps < driver_max_steps`. This guarantees a finite host run even when a program loops forever without reaching lowered HALT metadata.
 
 ### Watchdog mode
 
-If a program has HALT, or has no assertions defining a snapshot, reaching the limit requires that execution is already complete:
+If a program has HALT, reaching the limit requires that `PC` has already reached one of its generated `lowered_halt_n` values:
 
 ```ocaml
-assert (execution_complete(PC),
-        "maximum step limit reached before HALT or ROM end")
+assert ((PC == lowered_halt_0),
+        "maximum step limit reached before lowered HALT")
 ```
 
-The meaning is: “this program should terminate; the limit only prevents an infinite run.”
+For a program with no HALT and no explicitly requested bounded snapshot, budget exhaustion instead raises `maximum step limit reached without lowered HALT or an explicit bounded snapshot`. In both cases the meaning is: “the limit prevents an infinite host run; exhausting it is not successful completion.”
 
 ### Deliberately bounded snapshot
 
@@ -224,9 +268,9 @@ If a program has:
 
 - no HALT;
 - at least one `.assert`;
-- a `max_steps` value;
+- an explicitly configured source `.max_steps` or CLI `--max-steps` value;
 
-then the limit can mean “run at most N steps and inspect state.” A program that continues within ROM executes exactly N steps, then checks assertions without requiring `execution_complete`.
+then the limit means “run N retired instructions and inspect state.” If execution remains within the loaded image and does not fault, the driver executes exactly N steps and then checks the assertions without requiring lowered-HALT completion.
 
 This is useful for loop snapshots, but terminating programs should prefer `HALT` because it expresses completion more directly.
 
@@ -267,7 +311,17 @@ A runtime failure can therefore lead back to `.asm`, rather than only to generat
 
 ## Hook selection and confinement
 
-The assembler normalizes `.hook`, stores it in `.hack`, and the executor resolves it only after reload.
+Hook selection uses the same runtime-setting precedence:
+
+```text
+CLI --hook > source .hook > hooks/default.sail
+```
+
+`--hook` is normalized with the same rules as `.hook`. The effective path replaces source metadata before `.hack` is written, and the executor resolves the selected file only after strict reload. For example:
+
+```sh
+pixi run just hack run multiply summary --hook hooks/trace.sail --max-steps 10000
+```
 
 Security rules require that the path:
 
@@ -282,7 +336,7 @@ The final Sail inputs are:
 hack.sail + selected hook + generated driver
 ```
 
-A hook shares the generated process and can directly access `A`, `D`, `PC`, and `RAM`. That power is why hook source is confined to the package.
+A hook shares the generated process and can directly access `A`, `D`, `PC`, `RAM`, and model-owned `ROM`. That power is why hook source is confined to the package.
 
 ## Sail-to-native compilation
 
@@ -395,7 +449,8 @@ flowchart TD
 
 `test_executor.py` calls `write_driver()` and inspects generated Sail to fix:
 
-- ROM-end completion;
+- raw `ROM[index] = word` loading;
+- checked `hack_step()` dispatch and explicit loaded-image boundary failure;
 - bounded-loop behavior;
 - bit-exact, signed, unsigned, and PC assertions;
 - hook path confinement and call order;
@@ -441,9 +496,9 @@ First runs global tool tests such as `tests/test_install_sail.py`, then invokes 
 Follow artifact boundaries from front to back:
 
 1. **Source error**: inspect assembler `line N` diagnostics.
-2. **Encoding error**: run `just hack assemble NAME` and inspect `.hack` source mappings.
+2. **Encoding error**: run `just hack assemble NAME` and inspect the source annotations beside `.hack` words.
 3. **Metadata error**: inspect `//%hack` records at the top of `.hack`.
-4. **Driver error**: open `.driver.sail` and inspect ROM, loop, and assertions.
+4. **Driver error**: open `.driver.sail` and inspect `load_program()` ROM lines, checked-step run control, and assertions.
 5. **Sail type error**: read Sail `-c` output directly.
 6. **C build error**: verify compiler, runtime include path, GMP, and compatibility layer.
 7. **Architectural assertion failure**: use the `.asm` line in the message and final register summary.
@@ -480,9 +535,9 @@ pixi run just hack run multiply
 
 Open `isa/hack/.build/multiply.driver.sail` and locate:
 
-- the machine word at ROM address zero;
+- the `ROM[0] = word` load line;
 - the HALT address;
-- the main loop;
+- the generated run loop and checked `hack_step()` call;
 - the Sail assertion corresponding to `R2 == 42`;
 - hook call order.
 

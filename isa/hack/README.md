@@ -12,9 +12,11 @@ Run from the repository root:
 pixi run just hack list                  # List programs/*.asm
 pixi run just hack check                 # Type-check hack.sail
 pixi run just hack assemble multiply     # Write summary-annotated .build/multiply.hack
+pixi run just hack assemble multiply summary --hook hooks/trace.sail --max-steps 10000
 pixi run just hack a multiply full       # Short alias; request full annotations
 pixi run just hack run multiply none     # Build without explanatory comments
 pixi run just hack r multiply            # Short alias for run
+pixi run just hack run multiply summary --hook hooks/trace.sail --max-steps 10000
 pixi run just hack test                  # Unit tests + every program end to end
 pixi run just hack clean                 # Remove generated artifacts
 ```
@@ -23,14 +25,20 @@ pixi run just hack clean                 # Remove generated artifacts
 
 | Path | Purpose |
 | --- | --- |
-| `hack.sail` | A/C decoding, ALU, registers, RAM, and PC transitions |
+| `hack.sail` | ROM storage, raw-word fetch, A/C decoding, typed stepping, ALU, registers, RAM, and PC transitions |
 | `programs/*.asm` | Runnable examples and end-to-end regressions |
 | `tools/assembler.py` | Standard Hack assembly, Hack+ lowering, and `.hack` I/O |
 | `tools/executor.py` | Driver generation, Sail C-backend compilation, and execution |
 | `tools/workflow.py` | Program discovery and command dispatch |
-| `hooks.sail` / `hooks/` | Default and optional execution hooks |
+| `hooks/default.sail` / `hooks/trace.sail` | No-op default and optional example execution hooks |
 | `tests/` | Assembler, executor, workflow, and Sail conformance tests |
 | `.build/` | Git-ignored machine code, driver, C, and executable artifacts |
+
+## Execution boundary
+
+The Sail model owns `ROM : vector(32768, word)`. `fetch_hack(pc)` returns the raw 16-bit word at `pc`, and `hack_step()` composes fetch → `decode_hack` → execute while returning a typed result. The model, not Python, therefore owns all A/C decoding.
+
+The generated driver emits `load_program()` with raw `ROM[index] = word` assignments and optional source comments; it does not generate `instruction_at`, `execute_at`, or an address-to-decode match. A small `execution_should_continue(pc, steps)` helper centralizes the HALT-metadata, image-boundary, and step-budget conditions, while generated `main()` directly matches each `hack_step()` result and validates why the loop stopped. Reaching HALT metadata is valid completion, leaving the loaded image is an explicit error, and exhausting the default 100000-step watchdog is a failure. These policies, hooks, assertions, and final output remain driver responsibilities because standard Hack has no architectural HALT instruction.
 
 ## Artifact comment levels
 
@@ -39,8 +47,8 @@ pixi run just hack clean                 # Remove generated artifacts
 | Level | `.hack` machine words | Generated `.driver.sail` |
 | --- | --- | --- |
 | `none` | No explanatory word comments | No explanatory comments |
-| `summary` | ROM address and source line; Hack+ words also show `[i/n] source => canonical` | Stage comments and concise per-ROM mappings |
-| `full` | Summary information plus complete source text | Stage comments, full per-ROM mappings, assertion sources, and output semantics |
+| `summary` | ROM/source location and normalized assembly for every word; Hack+ also shows `[i/n] source => canonical`; inline comments stay at the far right | Stage comments and concise annotated `ROM[index] = word` load lines |
+| `full` | Summary information plus the exact original source text | Stage comments, fully annotated ROM load lines, assertion sources, and output semantics |
 
 Examples:
 
@@ -63,11 +71,11 @@ For `SET R0, 6`, the default `summary` output makes the four real instructions v
 1110001100001000 // ROM[0003] L4 [4/4] SET R0, 6 => M=D
 ```
 
-`[i/n]` means result `i` of `n` from one source pseudoinstruction. It is explanatory text, not machine code; ordinary A/C instructions have no expansion marker. `full` additionally preserves the complete source line, including its inline comment. The same per-ROM text appears in `.driver.sail` only after strict `.hack` reload.
+`[i/n]` means result `i` of `n` from one source pseudoinstruction. It is explanatory text, not machine code; ordinary A/C instructions have no expansion marker but still show their assembly source in `summary`. Inline assembly comments appear at the far right in `summary`; `full` preserves the exact complete source line. The same per-word text appears beside the corresponding `ROM[index] = word` load line in `.driver.sail` only after strict `.hack` reload.
 
 ## Program source format
 
-Workflow discovers every direct `programs/*.asm` file in filename order. The filename stem is the command-line program name. A bundled program contains one nonempty description and at least one assertion:
+Workflow discovers every direct `programs/*.asm` file in filename order. The filename stem is the command-line program name. Standard Hack symbols `R0..R15` mean `RAM[0]..RAM[15]`; they are memory aliases, not additional CPU registers. A bundled program contains one nonempty description and at least one assertion:
 
 ```asm
 .description Repeated-addition multiplication: 6 times 7
@@ -156,18 +164,35 @@ Normal `run` permits a program without assertions and prints `RUN COMPLETE`. `ha
 .max_steps 10_000
 ```
 
-- `.hook` selects one package-relative `.sail` hook. Absolute paths and `..` are rejected.
-- `.max_steps` is a watchdog when `HALT` exists, or a bounded snapshot limit when a program intentionally has no `HALT`.
+- `.hook` selects one package-relative `.sail` hook. Absolute paths and `..` are rejected. CLI `--hook` overrides it when assembling an artifact or running it.
+- `.max_steps` is a watchdog when `HALT` exists, or an explicitly requested bounded snapshot limit when a program has no `HALT` and has assertions. CLI `--max-steps` overrides it for `assemble` or `run`; without either explicit limit, executor runs use a 100000-step watchdog whose exhaustion is an error.
+- Runtime configuration precedence is `CLI override > source directive > default`. The effective CLI override is serialized into `.hack` metadata before strict reload, so driver generation never depends on hidden in-memory configuration.
 - Directives emit no machine words. Assertions, HALT addresses, hooks, and step limits are stored as execution metadata.
+
+| Concern | Source form | CLI form | Classification |
+| --- | --- | --- | --- |
+| Hook selection | `.hook path` | `--hook path` | Overridable runtime setting |
+| Step budget | `.max_steps N` | `--max-steps N` | Overridable runtime setting |
+| Program description | `.description text` | None | Source identity used by discovery |
+| Architectural checks | `.assert ...` | None | Source-owned regression contract; CLI cannot weaken or replace it |
+| Explanatory artifact text | None | `--comments` | Host presentation only |
+| Generated-file location | None | `--output` / workflow-selected `.build` prefix | Host filesystem policy |
+| Require at least one assertion | None | `--require-assertions` | Test/workflow gate, not program semantics |
+
+A future initial-state/input facility should follow the dual pattern—for example, a source `.input` plus repeatable CLI `--input` overrides—but it should only be added with a concrete reusable-program use case. It is not needed by the current standalone examples.
 
 ## Hack+ pseudoinstructions
 
 | Syntax | Standard Hack effect |
 | --- | --- |
 | `SET target, value` | Store an immediate or symbol address in `RAM[target]` |
-| `INC target` / `DEC target` | Increment or decrement memory |
+| `MOV target, source` | Copy `RAM[source]` to `RAM[target]` |
+| `CLR target` / `INC target` / `DEC target` | Clear, increment, or decrement memory |
+| `ADD/SUB/AND/OR target, source` | Update `RAM[target]` with a binary memory operation |
+| `NEG target` / `NOT target` | Negate or complement memory |
+| `NOP` | Emit one no-operation C-instruction |
 | `GOTO label` | Unconditional branch |
-| `JNZ/JGT/JEQ/JGE/JLT/JLE target, label` | Read `RAM[target]` and branch |
+| `JNZ/JNE/JGT/JEQ/JGE/JLT/JLE target, label` | Read `RAM[target]` and branch |
 | `HALT` | Emit a private two-instruction self-loop and record completion |
 
 Hack+ lowers completely to standard Hack A/C instructions before label collection; it does not extend the ISA. For a pseudoinstruction that lowers to `n` real instructions, annotated artifacts mark each machine word as `[1/n]` through `[n/n]`; ordinary A/C instructions have no expansion marker. Complete expansions and register side effects are documented in [Hack+ lowering](https://vidlg.github.io/verylogic-workspace-sail/hack/isa#how-hack-lowers-to-real-instructions).
@@ -183,7 +208,7 @@ A selected hook defines:
 | `hack_hook_after_step(step)` | After each instruction |
 | `hack_hook_after_run(steps)` | After assertions pass, before final output |
 
-Hooks run in the same Sail/C process as `hack.sail` and the generated driver, so they can read or update `A`, `D`, `PC`, and `RAM`. A custom hook replaces the default `hooks.sail`.
+Hooks run in the same Sail/C process as `hack.sail` and the generated driver, so they can read or update `ROM`, `A`, `D`, `PC`, and `RAM`. A custom hook replaces the no-op `hooks/default.sail` implementation.
 
 ## Learn the implementation
 

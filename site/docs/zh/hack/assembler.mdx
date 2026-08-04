@@ -196,6 +196,8 @@ SP LCL ARG THIS THAT
 SCREEN KBD
 ```
 
+`R0..R15` 直接映射到 RAM 地址 `0..15`；它们是预定义汇编符号，不是架构寄存器。`SP/LCL/ARG/THIS/THAT` 则是前五个相同地址的别名。
+
 然后遍历展开后的代码：
 
 - `Label` 记录当前 ROM 地址；
@@ -275,7 +277,7 @@ hook_path: str
 
 ```text
 //%hack format {"version":3}
-//%hack hook {"path":"hooks.sail"}
+//%hack hook {"path":"hooks/default.sail"}
 //%hack halt {"address":12}
 //%hack assert {"line":20,"mode":"bits","operator":"==","target":"R2","value":42}
 //%hack max_steps {"value":1000}
@@ -299,10 +301,10 @@ hook_path: str
 | 级别 | 机器字注释 |
 | --- | --- |
 | `none` | 不添加行尾解释 |
-| `summary` | ROM 地址和源码行；Hack+ 机器字还显示 `[i/n] 源伪指令 => 正式指令` |
-| `full` | summary 信息加完整原始源码文本 |
+| `summary` | 每个机器字都显示 ROM/源码位置和规范化汇编；Hack+ 增加 `[i/n] 源伪指令 => 正式指令`；行内注释放在最右侧 |
+| `full` | summary 信息加精确的完整原始源码文本 |
 
-默认使用 `summary`：伪指令展开仍然可见，普通 A/C 指令则保持紧凑。`//%hack` 是机器可读的执行 metadata，因此所有级别都会保留。先运行 `pixi run just hack assemble multiply`；需要完整源码文本和 driver 解释时再显式选择 `full`。
+默认使用 `summary`：普通 A/C 源码和伪指令展开都会显示，行内汇编注释放在最右侧。`//%hack` 是机器可读的执行 metadata，因此所有级别都会保留。可以运行 `pixi run just hack assemble multiply`，也可以用 `pixi run just hack assemble multiply summary --hook hooks/trace.sail --max-steps 10000` 覆盖运行 metadata。CLI 覆盖先经 `apply_runtime_overrides()` 应用，再调用 `write_hack()`，因此 artifact 会记录最终有效值。
 
 ## 为什么还要 `load_hack()`
 
@@ -346,13 +348,14 @@ executor 不直接使用内存中的 `AssemblyResult`。它先调用 `write_hack
 
 ```text
 CLI main
-└── assemble(source)
-    └── assemble_text(text)
-        ├── parse(text)
-        │   └── Parser.parse
-        ├── expand(statements)
-        ├── pass 1: labels
-        └── pass 2: symbols + encode
+├── assemble(source)
+│   └── assemble_text(text)
+│       ├── parse(text)
+│       │   └── Parser.parse
+│       ├── expand(statements)
+│       ├── pass 1: labels
+│       └── pass 2: symbols + encode
+├── apply_runtime_overrides(result)
 └── write_hack(result, output)
 
 executor

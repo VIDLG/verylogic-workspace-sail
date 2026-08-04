@@ -146,13 +146,13 @@ pixi run just hack assemble multiply
 pixi run just hack run multiply full
 ```
 
-The default `summary` level keeps ROM addresses and source lines compact while marking every Hack+ expansion as `[i/n] source => canonical`. Explicit `full` adds complete source text and more driver-stage and assertion explanations. Use `none` when a bare artifact is more useful than teaching annotations.
+The default `summary` level shows normalized source for every A/C word, marks Hack+ expansion as `[i/n] source => canonical`, and keeps inline assembly comments at the far right. Explicit `full` preserves exact source text and adds more driver-stage and assertion explanations. Use `none` when a bare artifact is more useful than teaching annotations.
 
 The generated `isa/hack/.build/multiply.hack` contains standard 16-bit machine words plus source annotations:
 
 ```text
-0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
-1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+0000000000000110 // ROM[0000] L5 [1/4] SET R0, 6 => @6 // RAM[0] = multiplicand
+1110110000010000 // ROM[0001] L5 [2/4] SET R0, 6 => D=A // RAM[0] = multiplicand
 ```
 
 This is a useful bridge between the Project 06 encoding tables, assembly source, and Sail's decoder.
@@ -166,16 +166,39 @@ The core model is only about one hundred lines: [`isa/hack/hack.sail`](https://g
 ```ocaml
 type word = bits(16)
 type address = bits(15)
+type input_selector = bit
+type alu_control = bits(6)
+type destination_control = bits(3)
+type jump_control = bits(3)
 
 union instruction = {
   AInstruction : address,
-  CInstruction : (bit, bits(6), bits(3), bits(3))
+  CInstruction : (input_selector, alu_control, destination_control, jump_control)
 }
 
-mapping encdec : instruction <-> bits(16) = {
-  AInstruction(address) <-> 0b0 @ address,
+mapping encdec : instruction <-> word = {
+  AInstruction(value) <-> 0b0 @ value,
   CInstruction(a, comp, dest, jump) <-> 0b111 @ a @ comp @ dest @ jump
 }
+
+union hack_decode_result = {
+  Decoded : instruction,
+  DecodeIllegal : word
+}
+
+function decode_hack(encoded : word) -> hack_decode_result = {
+  match encoded[15] {
+    0b0 => Decoded(encdec(encoded)),
+    0b1 => {
+      match encoded[14 .. 13] {
+        0b11 => Decoded(encdec(encoded)),
+        _ => DecodeIllegal(encoded)
+      }
+    }
+  }
+}
+
+function encode_hack(instr : instruction) -> word = encdec(instr)
 ```
 
 Hack has two machine-instruction forms:
@@ -185,7 +208,7 @@ Hack has two machine-instruction forms:
 | A instruction | `0vvvvvvvvvvvvvvv` | Load a 15-bit value into `A` |
 | C instruction | `111accccccdddjjj` | Compute, write destinations, and optionally jump |
 
-Sail's bidirectional `mapping` states encoding and decoding together, close to the notation used in an ISA manual.
+Named bit-vector types make each C-instruction field's role visible without changing its raw encoding. The compact `encdec` mapping states the legal A/C encoding in both directions. `decode_hack` adds an explicit legality `match`: valid prefixes use `encdec`, while `100/101/110` preserve the raw word in `DecodeIllegal`. `execute` receives only the decoded `instruction`; it does not perform encoding or decoding.
 
 ### 2. Architectural state
 
@@ -236,7 +259,7 @@ generated .driver.sail + hack.sail + hook
   │  Sail type checking and C backend
   ▼
 .build/<program>.exe
-  │  execute until HALT, end of ROM, or a step limit
+  │  execute until HALT or a step limit; leaving the loaded image is an error
   ▼
 evaluate source .assert directives
 ```
@@ -258,7 +281,7 @@ For the complete assertion, hook, pseudoinstruction, and annotated-file syntax, 
 
 ### Compare source with machine encoding
 
-1. Read `encdec` in `hack.sail`.
+1. Read `encdec`, `decode_hack`, and `encode_hack` in `hack.sail`.
 2. Write or modify a small standard Hack assembly program.
 3. Run `pixi run just hack assemble <name>`.
 4. Compare each generated word with the Project 06 tables.

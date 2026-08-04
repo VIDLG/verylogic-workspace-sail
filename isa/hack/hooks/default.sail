@@ -1,5 +1,5 @@
-// Optional Hack execution hooks. These functions run in the same Sail/C program as the ISA.
-// They may inspect or update A, D, PC, and RAM when modelling devices or tracing execution.
+// Default no-op Hack execution hooks. A source .hook directive may select another implementation.
+// Hooks run with the ISA and may inspect or update ROM, A, D, PC, and RAM.
 
 function hack_hook_before_run() -> unit = { () }
 

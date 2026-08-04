@@ -1,5 +1,23 @@
 // Direct conformance checks for the Hack Sail semantics.
 
+function test_encoding() -> unit = {
+  match decode_hack(0x002A) {
+    Decoded(AInstruction(value)) => assert (value == 0b000000000101010, "decode A instruction"),
+    _ => assert (false, "A instruction decoded incorrectly")
+  };
+  match decode_hack(0xE308) {
+    Decoded(CInstruction(a, comp, dest, jump)) =>
+      assert (a == 0b0 & comp == 0b001100 & dest == 0b001 & jump == 0b000, "decode C instruction"),
+    _ => assert (false, "C instruction decoded incorrectly")
+  };
+  match decode_hack(0x8000) {
+    DecodeIllegal(encoded) => assert (encoded == 0x8000, "preserve illegal encoding"),
+    _ => assert (false, "illegal prefix decoded as an instruction")
+  };
+  assert (encode_hack(AInstruction(0b000000000101010)) == 0x002A, "encode A instruction");
+  assert (encode_hack(CInstruction(0b0, 0b001100, 0b001, 0b000)) == 0xE308, "encode C instruction")
+}
+
 function test_alu() -> unit = {
   assert (alu(0b101010, 0x0005, 0x0003) == 0x0000, "alu 0");
   assert (alu(0b111111, 0x0005, 0x0003) == 0x0001, "alu 1");
@@ -118,11 +136,32 @@ function test_execute() -> unit = {
   assert (PC == 0b000000000000000, "PC wraps at 15 bits")
 }
 
+function test_step() -> unit = {
+  ROM[30000] = 0x002A;
+  PC = 0b111010100110000;
+  assert (fetch_hack(PC) == 0x002A, "fetch reads raw ROM word");
+  match hack_step() {
+    HackRetired(()) => assert (A == 0x002A & PC == 0b111010100110001, "step fetches, decodes, and executes"),
+    _ => assert (false, "legal ROM word did not retire")
+  };
+
+  ROM[30001] = 0x8000;
+  PC = 0b111010100110001;
+  D = 0x1234;
+  match hack_step() {
+    HackIllegalInstruction(encoded) => assert (encoded == 0x8000, "step preserves illegal ROM word"),
+    _ => assert (false, "illegal ROM word retired")
+  };
+  assert (PC == 0b111010100110001 & D == 0x1234, "illegal step does not commit state")
+}
+
 function hack_hook_before_run() -> unit = {
+  test_encoding();
   test_alu();
   test_jump_conditions();
   test_destinations();
   test_execute();
+  test_step();
   A = 0x0000;
   D = 0x0000;
   PC = 0b000000000000000;

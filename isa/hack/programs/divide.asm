@@ -1,9 +1,10 @@
 .description Repeated-subtraction division: 100 divided by 7
 // Integer division by repeated subtraction.
-// Input: R0=100, R1=7. Expected: R2=14 (quotient), R3=2 (remainder).
-SET R0, 100
-SET R1, 7
-SET R2, 0
+// R0..R3 are standard assembler aliases for RAM[0]..RAM[3], not CPU registers.
+// Input: RAM[0]=100, RAM[1]=7. Expected: RAM[2]=14 (quotient), RAM[3]=2 (remainder).
+SET R0, 100 // RAM[0] = dividend
+SET R1, 7   // RAM[1] = divisor
+CLR R2      // RAM[2] = quotient
 
 (LOOP)
 @R0
@@ -13,18 +14,12 @@ D=D-M
 @DONE
 D;JLT
 
-@R1
-D=M
-@R0
-M=M-D
+SUB R0, R1
 INC R2
 GOTO LOOP
 
 (DONE)
-@R0
-D=M
-@R3
-M=D
+MOV R3, R0
 HALT
 
 .assert R2 == 14

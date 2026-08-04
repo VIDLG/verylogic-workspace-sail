@@ -40,13 +40,15 @@ Hack is a 16-bit teaching computer with separate instruction and data storage. P
 | `D` | 16 bits | General data register and fixed ALU input | `register D : word` |
 | `PC` | 15 bits | Address of the next ROM instruction | `register PC : program_counter` |
 | RAM | 32768 × 16 bits | Data address space | `register RAM : vector(32768, word)` |
-| ROM | Up to 32768 × 16 bits | Program machine words | Loaded and fetched by the generated driver |
+| ROM | 32768 × 16 bits | Program machine words | `register ROM : vector(32768, word)`; loaded by the driver, fetched by the model |
 
 Assembly `M` is **not a separate register**. It denotes memory at the current A address:
 
 ```text
 M ≡ RAM[A[14:0]]
 ```
+
+The standard assembler symbols `R0..R15` are aliases for `RAM[0]..RAM[15]`; they are not additional architectural registers. For example, `@R3` loads address `3` into `A`, and a following `D=M` reads `RAM[3]`.
 
 `A` is 16 bits, but memory addresses and jump targets use only its low 15 bits. An A instruction can load only `0..32767`; a C instruction that writes `A` can produce any 16-bit value.
 
@@ -267,10 +269,19 @@ Hack+ expansion happens **before** label resolution and machine-code encoding. E
 | Hack+ source | Standard Hack expansion | Main side effects |
 | --- | --- | --- |
 | `SET target, value` | `@value` / `D=A` / `@target` / `M=D` | Changes `A`, `D`, and `RAM[target]` |
+| `MOV target, source` | `@source` / `D=M` / `@target` / `M=D` | Changes `A`, `D`, and `RAM[target]` |
+| `CLR target` | `@target` / `M=0` | Changes `A` and `RAM[target]` |
 | `INC target` | `@target` / `M=M+1` | Changes `A` and `RAM[target]` |
 | `DEC target` | `@target` / `M=M-1` | Changes `A` and `RAM[target]` |
+| `ADD target, source` | `@source` / `D=M` / `@target` / `M=D+M` | `RAM[target] += RAM[source]`; changes `A` and `D` |
+| `SUB target, source` | `@source` / `D=M` / `@target` / `M=M-D` | `RAM[target] -= RAM[source]`; changes `A` and `D` |
+| `AND target, source` | `@source` / `D=M` / `@target` / `M=D&M` | Bitwise update of `RAM[target]`; changes `A` and `D` |
+| `OR target, source` | `@source` / `D=M` / `@target` / `M=D\|M` | Bitwise update of `RAM[target]`; changes `A` and `D` |
+| `NEG target` | `@target` / `M=-M` | Changes `A` and `RAM[target]` |
+| `NOT target` | `@target` / `M=!M` | Changes `A` and `RAM[target]` |
+| `NOP` | `0` | Advances `PC` without changing data state |
 | `GOTO label` | `@label` / `0;JMP` | Changes `A` and jumps |
-| `JNZ target, label` | `@target` / `D=M` / `@label` / `D;JNE` | Changes `A` and `D`; jumps if nonzero |
+| `JNZ/JNE target, label` | `@target` / `D=M` / `@label` / `D;JNE` | Changes `A` and `D`; jumps if nonzero |
 | `JGT target, label` | `@target` / `D=M` / `@label` / `D;JGT` | Changes `A` and `D`; jumps if positive |
 | `JEQ target, label` | `@target` / `D=M` / `@label` / `D;JEQ` | Changes `A` and `D`; jumps if zero |
 | `JGE target, label` | `@target` / `D=M` / `@label` / `D;JGE` | Changes `A` and `D`; jumps if nonnegative |
@@ -280,9 +291,10 @@ Hack+ expansion happens **before** label resolution and machine-code encoding. E
 
 Subtleties worth making explicit:
 
-- `SET R0, R1` stores the symbol `R1`'s **address value `1`** in `R0`; it does not copy the contents of `RAM[R1]`.
-- Conditional pseudoinstructions read `RAM[target]` and overwrite `D`.
-- `JNZ` is a readability alias; the standard Hack jump mnemonic is `JNE`.
+- `SET R0, R1` stores the symbol `R1`'s **address value `1`** in `R0`; use `MOV R0, R1` to copy `RAM[R1]`.
+- Binary memory operations use destination-first order: `SUB R0, R1` means `RAM[R0] -= RAM[R1]`.
+- `MOV`, binary memory operations, and conditional pseudoinstructions overwrite `D`.
+- `JNZ` and `JNE` are equivalent; `JNE` matches the standard Hack jump mnemonic.
 - `HALT` is not a Hack instruction. The assembler creates a unique `__HACKPLUS_HALT_n` label and a two-instruction self-loop, then records that ROM address as execution metadata. This project's executor stops when it reaches the address; native Hack hardware would remain in the loop.
 
 ### Complete lowering example
@@ -324,12 +336,21 @@ The structure of [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail
 | Sail definition | ISA concept |
 | --- | --- |
 | `type word = bits(16)` | 16-bit machine and data words |
+| `input_selector` / `alu_control` / `destination_control` / `jump_control` | Named bit-vector types for C-instruction fields |
 | `union instruction` | A/C decoded forms |
-| `mapping encdec` | Bidirectional mapping between words and decoded instructions |
-| `register A/D/PC/RAM` | Architectural state |
+| `mapping encdec` | Compact bidirectional relation for legal A/C encodings |
+| `union hack_decode_result` | Explicit decoded or illegal result |
+| `decode_hack` / `encode_hack` | Legality-checking decode wrapper and mapping-based encode wrapper |
+| `register ROM/A/D/PC/RAM` | Instruction storage and architectural state |
+| `fetch_hack` | Read one raw word from ROM at a program counter |
 | `alu` | `comp` semantics |
 | `should_jump` | `jump` truth table |
-| `execute` | One-instruction state transition |
+| `execute` | State transition for an already-decoded instruction |
+| `hack_step` / `hack_execution_outcome` | Model-owned fetch → decode → execute composition and typed result |
+
+The C-instruction fields use named bit-vector types rather than anonymous `bit`/`bits(n)` positions. This documents their roles throughout `CInstruction`, `alu`, and `should_jump` without changing the raw encoding domain.
+
+`encdec` states the legal A/C bit layout once and works in both directions. `decode_hack` explicitly matches bit 15 and then the C-instruction `11` prefix before calling that mapping. Prefixes `100`, `101`, and `110` return `DecodeIllegal(encoded)` and preserve the raw word; no wildcard silently constructs a legal instruction. `encode_hack` exposes the reverse mapping direction. `execute` consumes an already-decoded `instruction`, so it does not call `encdec` directly.
 
 The standard assembler emits only the canonical `comp` encodings in the tables above. Sail models `a` separately from the six `comp` bits; for operations that do not read `y`, noncanonical encodings with `a=1` behave as aliases in the circuit and this model, but this project's assembler never emits them.
 
@@ -337,7 +358,7 @@ The standard assembler emits only the canonical `comp` encodings in the tables a
 
 Keep the complete Hack platform separate from this executable model when interpreting results:
 
-- ROM is owned and fetched by the generated Sail driver, not declared as a register in `hack.sail`.
+- ROM is declared in `hack.sail`; the generated driver initializes its raw words, while `fetch_hack` and `hack_step` own instruction fetch and dispatch.
 - RAM has no Screen or Keyboard device side effects.
 - `HALT`, Hack+, `.assert`, `.hook`, and `.max_steps` belong to the tool layer, not the Hack ISA.
 - The model specifies architectural transitions, not gate delays, clock-edge details, or nand2tetris HDL.
@@ -346,7 +367,7 @@ Keep the complete Hack platform separate from this executable model when interpr
 ## Study the model in code
 
 1. Read the A/C encodings and execution pseudocode in this document.
-2. Open [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail) and follow `encdec → alu → should_jump → execute`.
+2. Open [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail) and follow `encdec → decode_hack → encode_hack → fetch_hack → alu → should_jump → execute → hack_step`.
 3. Compare standard assembly and Hack+ in [`programs/basic_alu.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/basic_alu.asm).
 4. Run `pixi run just hack assemble basic_alu` and inspect `isa/hack/.build/basic_alu.hack`.
 5. Read [`tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail) to see ISA rules turned directly into tests.

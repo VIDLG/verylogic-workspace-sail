@@ -8,11 +8,11 @@
 
 | 文件 | 负责什么 | 不负责什么 |
 | --- | --- | --- |
-| `hack.sail` | A/C 指令、ALU、寄存器、RAM、PC 状态转换 | ROM 内容、特定程序的 `main()`、测试程序发现 |
-| `executor.py` | 生成程序专属 driver、调用 Sail/C 编译、运行并检查断言 | 程序发现和批量测试策略 |
+| `hack.sail` | ROM 存储、原始机器字取指、A/C 解码、类型化 `hack_step()`、ALU、寄存器、RAM 和 PC 状态转换 | 加载特定程序映像、特定程序的 `main()`、测试程序发现 |
+| `executor.py` | 生成程序专属 driver、加载原始 ROM、运行控制、调用 Sail/C 编译、断言和输出 | A/C 解码、程序发现和批量测试策略 |
 | `workflow.py` | 发现源码、选择程序、组织 `check/assemble/run/test/clean` | ISA 语义和机器状态判断 |
 
-这种拆分让 `hack.sail` 保持为可复用的 ISA 模型。换一个 Hack 程序只需要生成新的 driver，不需要改 CPU 语义。
+这种拆分让 `hack.sail` 保持为可复用的 ISA 模型。换一个 Hack 程序只需要生成新的 ROM 加载器和 driver，不需要改取指、解码或 CPU 语义。
 
 ```mermaid
 flowchart TD
@@ -26,42 +26,56 @@ flowchart TD
     Sail --> C[generated .c and .h]
     C --> Compiler[GCC or MinGW + Sail runtime + GMP]
     Compiler --> Native[native executable]
-    Native --> Result[hooks + execute loop + Sail assertions]
+    Native --> Result[ROM load + hooks + hack_step loop + Sail assertions]
 ```
 
 ## 为什么 `hack.sail` 没有 `main()`
 
-ISA 模型回答“一条已经解码的指令怎样改变架构状态”，但一个可运行程序还需要回答：
+ISA 模型拥有架构 ROM，并回答“一步执行怎样取出原始机器字、解码并改变架构状态”，但一个可运行程序还需要回答：
 
-- ROM 的每个地址是什么机器字？
-- 当前 `PC` 对应哪条指令？
+- 要把哪些原始机器字加载进 ROM？
 - 什么时候算执行完成？
 - 每步前后是否调用 Hook？
 - 最终检查哪些断言？
 - 打印哪些状态？
 
-这些问题随程序变化，不应硬编码在 ISA 中。`executor.write_driver()` 为每个 `.hack` 产物生成一个小型 Sail 主程序来补齐它们。
+这些程序专属问题不应硬编码在 ISA 中。`executor.write_driver()` 为每个 `.hack` 产物生成一个小型 Sail `main()`；它把程序映像加载到模型自有的 `ROM`，再围绕 `hack_step()` 提供运行控制。
 
-这和真实系统中的分层很相似：CPU 核心定义指令行为，加载器或仿真器提供程序映像与运行控制。
+这和真实系统中的分层很相似：CPU 模型定义存储、取指、解码和指令行为，加载器或仿真器提供程序映像与运行控制策略。
 
 ## `executor.run()` 的完整顺序
 
 ```text
 1. 校验 CLI 参数
 2. assemble(program) 得到 AssemblyResult
-3. 计算 CLI/source 的有效 max_steps
-4. 检查断言要求和 32768 字 ROM 特例
-5. 删除同名前次构建产物
-6. write_hack() 写入 <output>.hack
-7. load_hack() 从磁盘严格重新加载
-8. write_driver() 生成 <output>.driver.sail
-9. 从重载 metadata 安全解析 Hook 文件
-10. Sail 生成 C
-11. C 编译器链接运行时和 GMP
-12. 运行宿主机可执行程序
+3. 计算 CLI/source 的有效 `max_steps` 与 Hook 设置
+4. 把 CLI 覆盖应用到 assembly metadata
+5. 检查断言要求与 ROM 大小
+6. 删除同名前次构建产物
+7. write_hack() 写入 <output>.hack
+8. load_hack() 从磁盘严格重新加载
+9. write_driver() 生成 <output>.driver.sail
+10. 从重载 metadata 安全解析 Hook 文件
+11. Sail 生成 C
+12. C 编译器链接运行时和 GMP
+13. 运行宿主机可执行程序
 ```
 
-最关键的设计点是第 6、7 步。executor 不把汇编阶段的内存对象直接传到 driver，而是强制经过 `.hack` 文件边界。详见 [汇编器原理：为什么要重新加载](/zh/hack/assembler#为什么还要-load_hack)。
+最关键的设计点是第 7、8 步。最终 CLI 覆盖值会先序列化进 `.hack`；executor 不把汇编阶段的内存对象直接传到 driver。详见 [汇编器原理：为什么要重新加载](/zh/hack/assembler#为什么还要-load_hack)。
+
+### 哪些配置属于哪个入口
+
+| 关注点 | 源码 | CLI | 原因 |
+| --- | --- | --- | --- |
+| Hook | `.hook` | `--hook` | 单次运行可变策略 |
+| 步数预算 | `.max_steps` | `--max-steps` | 单次运行可变策略 |
+| 程序说明 | `.description` | 无 | discovery 使用的源码身份 |
+| 状态检查 | `.assert` | 无 | 源码拥有的回归契约 |
+| Artifact 注释 | 无 | `--comments` | 仅宿主展示策略 |
+| 输出 prefix | 无 | `--output` | 宿主文件系统策略 |
+| 强制断言存在 | 无 | `--require-assertions` | workflow/测试门禁 |
+
+所以 CLI 覆盖是有意分类，而不是机械复制：只有运行配置使用 `CLI > source > default`；CLI 不能静默替换源码断言或程序说明。
 
 ## 构建产物
 
@@ -76,7 +90,7 @@ executor 可能生成：
 | 产物 | 来源 | 作用 |
 | --- | --- | --- |
 | `multiply.hack` | `write_hack()` | 机器字和运行 metadata 的稳定边界 |
-| `multiply.driver.sail` | `write_driver()` | 程序专属 ROM、循环和断言 |
+| `multiply.driver.sail` | `write_driver()` | 程序专属 ROM 加载行、运行控制、断言和输出 |
 | `multiply.c` | Sail C 后端 | ISA + Hook + driver 的 C 实现 |
 | `multiply.h` | Sail C 后端 | 生成 C 的声明 |
 | `multiply.exe`（Windows）或 `multiply`（Linux） | C 编译器 | 最终宿主机程序 |
@@ -105,50 +119,69 @@ class LoadedHack:
 
 `test_run_uses_hook_path_from_reloaded_metadata` 专门验证 Hook 选择来自**重载结果**，而不是先前的 `AssemblyResult`。
 
-## driver 怎样表示 ROM
+## driver 怎样加载模型自有的 ROM
 
-`write_driver()` 把每个机器字变成 Sail `match` 分支：
+`hack.sail` 拥有完整的架构指令存储和原始取指操作：
 
 ```ocaml
-function instruction_at(pc : program_counter) -> instruction = {
-  match pc {
-    0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4 [1/4] SET R0, 6 => @6
-    0b000000000000001 => encdec(0b1110110000010000), // ROM[0001] L4 [2/4] SET R0, 6 => D=A
-    // ...
-    _ => AInstruction(0b000000000000000)
-  }
+register ROM : vector(32768, word)
+
+function fetch_hack(pc : program_counter) -> word =
+  ROM[unsigned(pc)]
+```
+
+`fetch_hack(pc)` 返回原始 16 位 `word`，不负责解码。模型的 `hack_step()` 组合完整架构路径：
+
+```text
+fetch_hack(PC) -> decode_hack(word) -> execute(decoded instruction) -> 类型化单步结果
+```
+
+`write_driver()` 不再生成 `instruction_at`、`execute_at` 或地址到解码结果的 `match`，而是生成包含原始赋值的 `load_program()`：
+
+```ocaml
+function load_program() -> unit = {
+  ROM[0] = 0b0000000000000110; // ROM[0000] L4 [1/4] SET R0, 6 => @6
+  ROM[1] = 0b1110110000010000; // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+  // ...
 }
 ```
 
-这做了两件事：
+Python 只重新加载机器字并写出这些 ROM 加载行，从不解码 A 指令或 C 指令；合法性检查、解码和执行都留在 Sail 中。`hack_step()` 返回类型化结果，生成的 `main()` 直接匹配该结果：成功退役就继续，非法编码则转成显式的 driver 断言失败。
 
-1. ROM 地址直接成为 15 位模式；
-2. 16 位机器字通过 `hack.sail` 的 `encdec` 解码。
+`.hack` 和 driver 共用 `none / summary / full` 级别。默认的 `summary` 会在每个 `ROM[index] = word` 加载行旁显示规范化汇编源码，Hack+ 机器字还带有 `[i/n] 源伪指令 => 正式指令`，行内汇编注释放在最右侧。`full` 增加精确的原始源码文本，并扩展断言来源、Hook 与最终输出解释。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
 
-因此 executor 不在 Python 中解释 A/C 指令。Python 只生成 ROM 映射，真正的解码和执行仍由 Sail 模型完成。
+`load_program()` 只写入已加载映像。生成的 `main()` 会在每次尝试前调用 `execution_should_continue(PC, steps)`，避免在程序已加载 ROM 范围之外调用 `hack_step()`。
 
-`.hack` 和 driver 共用 `none / summary / full` 级别。默认的 `summary` 会给每个 ROM 分支标出地址与源码行，Hack+ 机器字还带有 `[i/n] 源伪指令 => 正式指令`。`full` 增加完整原始源码文本，并扩展断言来源、Hook 与最终输出解释。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
+## driver 怎样停止并验证完成原因
 
-默认分支只是让函数在类型上完备；正常执行会先由 `execution_complete()` 阻止越过已加载 ROM 的取指。
-
-## driver 怎样判断结束
-
-生成的函数大致为：
+生成的 driver 把微妙的运行条件集中在一个小函数中：
 
 ```ocaml
-function execution_complete(pc : program_counter) -> bool = {
-  match pc {
-    HALT_ADDRESS_0 => true,
-    HALT_ADDRESS_1 => true,
-    _ => unsigned(pc) >= ROM_LENGTH
-  }
+let lowered_halt_0 : program_counter = 0b000000000110011
+let driver_max_steps : int = 100000
+
+function execution_should_continue(pc : program_counter, steps : int) -> bool = {
+  (pc != lowered_halt_0)
+  & unsigned(pc) < loaded_rom_words
+  & steps < driver_max_steps
 }
 ```
 
-执行在以下任一条件成立时完成：
+循环本身保持直接：
 
-1. `PC` 到达 `.hack` metadata 记录的 HALT 地址；
-2. `PC` 离开已加载 ROM。
+```ocaml
+while execution_should_continue(PC, steps) {
+  // 执行并检查一次 hack_step
+}
+```
+
+`loaded_rom_words` 由重新加载的 artifact 机器字数量生成；对 `basic_alu` 来说它是 `53`，覆盖 ROM 地址 `0..52`。它不是 `max_steps`，也不限制循环可以重复访问这些地址多少次。每个 `lowered_halt_n` 都来自重新加载的 `//%hack halt {"address": ...}` metadata；对应位型在 Hack ISA 中没有特殊含义。
+
+以下三种情况都会使条件变为 `false`，driver 会在循环后区分：
+
+1. `PC` 到达 `.hack` metadata 记录的 HALT 地址：有效完成；
+2. `PC` 离开已加载 ROM 映像：显式执行错误；
+3. `steps` 到达 `driver_max_steps`：只有显式请求 bounded snapshot 时有效，否则是 watchdog 失败。
 
 ### 为什么 HALT 自循环不会真的执行
 
@@ -162,66 +195,72 @@ Hack+ `HALT` 展开为：
 
 metadata 记录私有标签地址。driver 在循环开始处发现 `PC` 已等于该地址，于是退出；这两条自循环机器字保留在 `.hack` 中，保证产物在原生 Hack 上仍是合法程序。
 
+这有意属于 driver 策略。标准 Hack 没有编码后的 HALT 指令：Hack+ `HALT` 是汇编便利写法，ROM 末尾来自已加载 artifact，两者都不是 `hack.sail` 返回的架构 outcome。只有将来 ISA 真正增加 HALT opcode 时，解码并返回该结果才应进入模型。
+
 ### 32768 字 ROM 特例
 
-`PC` 只有 15 位，最大值是 `32767`。如果 ROM 恰好装满 32768 个字，条件 `PC >= ROM_LENGTH` 永远不可能成立。因此 executor 要求满 ROM 程序必须有：
+`PC` 只有 15 位，最大值是 `32767`。如果映像恰好装满 32768 个字，条件 `PC >= loaded_rom_words` 永远不可能成立，因为不存在可表示的“ROM 末尾之后”地址。已记录的 `HALT` 可以让程序正常完成；否则显式或默认步数预算仍会限制宿主运行，并以 watchdog 失败结束，除非源码显式请求 bounded snapshot。
 
-- 已记录的 `HALT`；或
-- `max_steps`。
+## 生成的运行循环
 
-否则程序没有可表示的“ROM 末尾之后”地址。
-
-## 主执行循环
-
-无限制版本的 driver 生成：
+生成的 `main()` 首先调用 `load_program()`。运行控制在概念上是：
 
 ```ocaml
+load_program();
 var steps : int = 0;
 hack_hook_before_run();
-while execution_complete(PC) == false {
+while execution_should_continue(PC, steps) {
   hack_hook_before_step(steps);
-  execute(instruction_at(PC));
+  match hack_step() {
+    HackRetired(()) => (),
+    HackIllegalInstruction(_) => assert(false, "illegal Hack instruction encoding")
+  };
   steps = steps + 1;
   hack_hook_after_step(steps)
 };
+assert (unsigned(PC) < loaded_rom_words,
+        "program counter left the loaded ROM image");
 // assertions
 hack_hook_after_run(steps);
 ```
+
+内联 `match` 在 `HackRetired(())` 时继续，在 `HackIllegalInstruction(_)` 时触发断言。取指、解码和执行仍是模型自有的一个 `hack_step()`；生成的 `main()` 只把类型化结果转换为 driver 策略。
 
 时序契约是：
 
 | 时点 | `step` 含义 |
 | --- | --- |
-| `before_run()` | 尚未进入循环 |
+| `load_program()` | 执行前填充模型自有的 `ROM` |
+| `before_run()` | 尚未进入运行循环 |
 | `before_step(steps)` | 即将执行的指令编号，从 `0` 开始 |
-| `execute(...)` | 调用 `hack.sail` 的 ISA 状态转换 |
+| 内联 `match hack_step()` | 检查模型自有的取指 → 解码 → 执行转换结果 |
 | `steps = steps + 1` | 已完成指令数增加 |
 | `after_step(steps)` | 参数从 `1` 开始，表示已完成数量 |
 | `.assert` | 循环结束后检查核心回归契约 |
 | `after_run(steps)` | 只有源码断言通过后才调用 |
 
-[`test_hook_call_order_preserves_core_assertions`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/test_executor.py) 通过检查生成源码中的位置顺序固定了这份契约。
+executor 组件测试通过检查生成源码中的位置顺序固定了这份契约。
 
 ## `max_steps` 的两种语义
 
 有效步数上限按以下优先级决定：
 
 ```text
-CLI --max-steps > source .max_steps > no limit
+CLI --max-steps > source .max_steps > 默认 watchdog（100000）
 ```
 
-有上限时循环额外要求 `steps < limit`。
+CLI 值会在严格 reload 前替换生成 `.hack` metadata 中的源码 `.max_steps`。generator 随后从重载 metadata 生成 `driver_max_steps`；普通运行没有显式配置时则使用默认值。`execution_should_continue` 要求 `steps < driver_max_steps`，因此即使程序永久循环且没有到达 lowered HALT metadata，宿主运行也一定有界。
 
 ### 看门狗模式
 
-如果程序有 HALT，或者没有断言来定义定步快照，那么达到上限后必须已经 `execution_complete(PC)`：
+如果程序有 HALT，达到上限时 `PC` 必须已经到达某个生成的 `lowered_halt_n`：
 
 ```ocaml
-assert (execution_complete(PC),
-        "maximum step limit reached before HALT or ROM end")
+assert ((PC == lowered_halt_0),
+        "maximum step limit reached before lowered HALT")
 ```
 
-这表示“程序本应结束，上限只是防止无限运行”。
+如果程序没有 HALT，也没有显式请求 bounded snapshot，预算耗尽会触发 `maximum step limit reached without lowered HALT or an explicit bounded snapshot`。两种情况表达的都是：“预算只负责限制宿主无限运行，耗尽预算不代表成功完成。”
 
 ### 有意的定步快照
 
@@ -229,9 +268,9 @@ assert (execution_complete(PC),
 
 - 没有 HALT；
 - 有至少一个 `.assert`；
-- 设置了 `max_steps`；
+- 显式设置源码 `.max_steps` 或 CLI `--max-steps`；
 
-那么上限可以表示“最多运行 N 步后观察状态”。对于在 ROM 内持续运行的程序，循环恰好执行 N 步，然后直接检查断言，不要求 `execution_complete`。
+那么上限表示“运行 N 条已退役指令后观察状态”。如果执行始终位于已加载映像内且没有 fault，driver 恰好执行 N 步，然后直接检查断言，不要求到达 lowered HALT。
 
 这种模式适合验证循环中的稳定状态，但应谨慎使用：终止程序优先写 `HALT`，让完成语义更清晰。
 
@@ -272,7 +311,17 @@ assertion signed(R0) < -1 from source line 23 failed
 
 ## Hook 怎样被选择和约束
 
-`.hook` 路径先由汇编器规范化并写入 `.hack`，重新加载后再由 `resolve_hook_source()` 解析。
+Hook 选择使用同一套运行配置优先级：
+
+```text
+CLI --hook > 源码 .hook > hooks/default.sail
+```
+
+`--hook` 与 `.hook` 使用相同的规范化规则。最终路径会在写 `.hack` 前替换源码 metadata，严格 reload 后才由 `resolve_hook_source()` 解析。例如：
+
+```sh
+pixi run just hack run multiply summary --hook hooks/trace.sail --max-steps 10000
+```
 
 安全规则包括：
 
@@ -287,7 +336,7 @@ assertion signed(R0) < -1 from source line 23 failed
 hack.sail + selected hook + generated driver
 ```
 
-Hook 与 ISA 和 driver 在同一生成程序中，因此能直接访问 `A`、`D`、`PC`、`RAM`。这也解释了为什么必须限制 Hook 到包内可信源码。
+Hook 与 ISA 和 driver 在同一生成程序中，因此能直接访问 `A`、`D`、`PC`、`RAM` 和模型自有的 `ROM`。这也解释了为什么必须限制 Hook 到包内可信源码。
 
 ## Sail 到本机程序的编译链
 
@@ -400,7 +449,8 @@ flowchart TD
 
 `test_executor.py` 直接调用 `write_driver()` 并检查生成源码，固定：
 
-- ROM 末尾停止条件；
+- 原始 `ROM[index] = word` 加载；
+- 检查后的 `hack_step()` 分派和已加载映像越界失败；
 - 有界循环语义；
 - 位精确/有符号/无符号断言；
 - Hook 路径限制和调用顺序；
@@ -448,9 +498,9 @@ pixi run just test
 按产物边界从前向后排查：
 
 1. **源码错误**：查看 assembler 的 `line N` 报错；
-2. **编码错误**：运行 `just hack assemble NAME`，检查 `.hack` 的源码映射；
+2. **编码错误**：运行 `just hack assemble NAME`，检查 `.hack` 机器字旁的源码注释；
 3. **metadata 错误**：检查 `.hack` 顶部 `//%hack` 记录；
-4. **driver 错误**：打开 `.driver.sail`，查看 ROM、循环和断言；
+4. **driver 错误**：打开 `.driver.sail`，查看 `load_program()` ROM 加载行、检查单步结果的运行控制和断言；
 5. **Sail 类型错误**：直接观察 Sail `-c` 输出；
 6. **C 编译错误**：检查编译器、runtime include、GMP 与平台兼容层；
 7. **架构断言失败**：根据错误中的 `.asm` 行号和最终寄存器摘要定位；
@@ -487,9 +537,9 @@ pixi run just hack run multiply
 
 打开 `isa/hack/.build/multiply.driver.sail`，找到：
 
-- ROM 地址 `0` 的机器字；
+- `ROM[0] = word` 加载行；
 - HALT 地址；
-- 主循环；
+- 生成的运行循环和检查 `hack_step()` 结果的调用；
 - `R2 == 42` 对应的 Sail 断言；
 - Hook 调用顺序。
 

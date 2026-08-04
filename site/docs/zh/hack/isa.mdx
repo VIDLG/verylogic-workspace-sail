@@ -40,13 +40,15 @@ Hack 是一台 16 位、采用分离指令存储和数据存储的教学计算�
 | `D` | 16 位 | 通用数据寄存器；作为 ALU 的固定输入 | `register D : word` |
 | `PC` | 15 位 | 下一条 ROM 指令的地址 | `register PC : program_counter` |
 | RAM | 32768 × 16 位 | 数据地址空间 | `register RAM : vector(32768, word)` |
-| ROM | 最多 32768 × 16 位 | 程序机器字 | 由生成的 driver 加载和取指 |
+| ROM | 32768 × 16 位 | 程序机器字 | `register ROM : vector(32768, word)`；由 driver 加载、模型取指 |
 
 汇编语言中的 `M` **不是独立寄存器**，而是当前 A 地址指向的内存：
 
 ```text
 M ≡ RAM[A[14:0]]
 ```
+
+标准汇编器符号 `R0..R15` 是 `RAM[0]..RAM[15]` 的别名，不是额外的架构寄存器。例如，`@R3` 把地址 `3` 装入 `A`，后续 `D=M` 读取的就是 `RAM[3]`。
 
 `A` 本身是 16 位，但内存地址和跳转目标只使用它的低 15 位。A 指令只能装入 `0..32767`；C 指令写回 `A` 时则可能产生任意 16 位值。
 
@@ -267,10 +269,19 @@ Hack+ 的展开在标签解析和机器码编码**之前**完成。展开后的�
 | Hack+ 写法 | 展开后的标准 Hack 指令 | 主要副作用 |
 | --- | --- | --- |
 | `SET target, value` | `@value` / `D=A` / `@target` / `M=D` | 改写 `A`、`D`、`RAM[target]` |
+| `MOV target, source` | `@source` / `D=M` / `@target` / `M=D` | 改写 `A`、`D`、`RAM[target]` |
+| `CLR target` | `@target` / `M=0` | 改写 `A`、`RAM[target]` |
 | `INC target` | `@target` / `M=M+1` | 改写 `A`、`RAM[target]` |
 | `DEC target` | `@target` / `M=M-1` | 改写 `A`、`RAM[target]` |
+| `ADD target, source` | `@source` / `D=M` / `@target` / `M=D+M` | `RAM[target] += RAM[source]`；改写 `A`、`D` |
+| `SUB target, source` | `@source` / `D=M` / `@target` / `M=M-D` | `RAM[target] -= RAM[source]`；改写 `A`、`D` |
+| `AND target, source` | `@source` / `D=M` / `@target` / `M=D&M` | 按位更新 `RAM[target]`；改写 `A`、`D` |
+| `OR target, source` | `@source` / `D=M` / `@target` / `M=D\|M` | 按位更新 `RAM[target]`；改写 `A`、`D` |
+| `NEG target` | `@target` / `M=-M` | 改写 `A`、`RAM[target]` |
+| `NOT target` | `@target` / `M=!M` | 改写 `A`、`RAM[target]` |
+| `NOP` | `0` | 只推进 `PC`，不改变数据状态 |
 | `GOTO label` | `@label` / `0;JMP` | 改写 `A`、跳转 |
-| `JNZ target, label` | `@target` / `D=M` / `@label` / `D;JNE` | 改写 `A`、`D`；非零时跳转 |
+| `JNZ/JNE target, label` | `@target` / `D=M` / `@label` / `D;JNE` | 改写 `A`、`D`；非零时跳转 |
 | `JGT target, label` | `@target` / `D=M` / `@label` / `D;JGT` | 改写 `A`、`D`；大于零时跳转 |
 | `JEQ target, label` | `@target` / `D=M` / `@label` / `D;JEQ` | 改写 `A`、`D`；等于零时跳转 |
 | `JGE target, label` | `@target` / `D=M` / `@label` / `D;JGE` | 改写 `A`、`D`；大于等于零时跳转 |
@@ -280,9 +291,10 @@ Hack+ 的展开在标签解析和机器码编码**之前**完成。展开后的�
 
 几个容易忽略的点：
 
-- `SET R0, R1` 把符号 `R1` 的**地址值 `1`**写入 `R0`，不是复制 `RAM[R1]` 的内容；
-- 条件伪指令读取的是 `RAM[target]`，并且会覆盖 `D`；
-- `JNZ` 只是更易读的别名，正式 Hack 跳转助记符是 `JNE`；
+- `SET R0, R1` 把符号 `R1` 的**地址值 `1`**写入 `R0`；复制 `RAM[R1]` 应使用 `MOV R0, R1`；
+- 二元内存运算采用目标在前的顺序：`SUB R0, R1` 表示 `RAM[R0] -= RAM[R1]`；
+- `MOV`、二元内存运算和条件伪指令都会覆盖 `D`；
+- `JNZ` 与 `JNE` 等价，后者与正式 Hack 跳转助记符一致；
 - `HALT` 不是 Hack 指令。汇编器为每个 `HALT` 生成唯一的 `__HACKPLUS_HALT_n` 标签和两指令自循环，并把该 ROM 地址记录为执行元数据；本项目 executor 到达该地址时结束，而把同一机器码放到真实 Hack 硬件上会停留在自循环中。
 
 ### 完整展开示例
@@ -324,12 +336,21 @@ D;JEQ
 | Sail 定义 | ISA 概念 |
 | --- | --- |
 | `type word = bits(16)` | 16 位机器字和数据字 |
+| `input_selector` / `alu_control` / `destination_control` / `jump_control` | C 指令各字段的命名位向量类型 |
 | `union instruction` | A/C 两种解码结果 |
-| `mapping encdec` | 机器字与指令结构之间的双向映射 |
-| `register A/D/PC/RAM` | 架构状态 |
+| `mapping encdec` | 合法 A/C 编码的紧凑双向关系 |
+| `union hack_decode_result` | 显式的成功或非法解码结果 |
+| `decode_hack` / `encode_hack` | 检查合法性的 decode 包装与基于 mapping 的 encode 包装 |
+| `register ROM/A/D/PC/RAM` | 指令存储与架构状态 |
+| `fetch_hack` | 按程序计数器从 ROM 读取一个原始机器字 |
 | `alu` | `comp` 字段语义 |
 | `should_jump` | `jump` 真值表 |
-| `execute` | 一条指令的状态转换 |
+| `execute` | 已解码指令的状态转换 |
+| `hack_step` / `hack_execution_outcome` | 模型自有的取指 → 解码 → 执行组合及类型化结果 |
+
+C 指令字段使用命名位向量类型，而不是匿名的 `bit` / `bits(n)` 位置。这使 `CInstruction`、`alu` 和 `should_jump` 的接口能够直接表达字段角色，同时不改变原始编码域。
+
+`encdec` 只写一次合法 A/C 位布局，并可双向使用。`decode_hack` 先显式匹配第 15 位，再匹配 C 指令的 `11` 前缀，确认合法后才调用 mapping。`100`、`101`、`110` 前缀返回 `DecodeIllegal(encoded)` 并保留原始机器字；通配分支不会静默构造合法指令。`encode_hack` 暴露 mapping 的反方向。`execute` 只消费已经解码的 `instruction`，因此不会直接调用 `encdec`。
 
 标准汇编器只生成上面表格中的规范 `comp` 编码。Sail 解码器把 `a` 与六位 `comp` 分开建模；对于不读取 `y` 的运算，非规范的 `a=1` 位型在电路和本模型中会表现为同义编码，但项目汇编器不会生成它们。
 
@@ -337,7 +358,7 @@ D;JEQ
 
 理解测试结果时要区分完整 Hack 平台与本可执行模型：
 
-- ROM 由生成的 Sail driver 持有并负责取指，不是 `hack.sail` 中的寄存器；
+- ROM 在 `hack.sail` 中声明；生成的 driver 初始化原始机器字，`fetch_hack` 和 `hack_step` 负责取指与分派；
 - RAM 没有 Screen、Keyboard 的设备副作用；
 - `HALT`、Hack+、`.assert`、`.hook` 和 `.max_steps` 都属于工具层，不属于 Hack ISA；
 - 模型描述架构状态转换，不模拟门延迟、时钟边沿细节或 nand2tetris HDL；
@@ -346,7 +367,7 @@ D;JEQ
 ## 对照源码学习
 
 1. 先看本文的 A/C 编码和执行伪代码；
-2. 打开 [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail)，依次阅读 `encdec → alu → should_jump → execute`；
+2. 打开 [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail)，依次阅读 `encdec → decode_hack → encode_hack → fetch_hack → alu → should_jump → execute → hack_step`；
 3. 查看 [`programs/basic_alu.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/basic_alu.asm)，对照标准汇编与 Hack+；
 4. 执行 `pixi run just hack assemble basic_alu`，查看 `isa/hack/.build/basic_alu.hack`；
 5. 阅读 [`tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail)，观察 ISA 规则如何直接变成测试。

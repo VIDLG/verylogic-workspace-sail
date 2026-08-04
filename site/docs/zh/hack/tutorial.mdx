@@ -152,13 +152,13 @@ pixi run just hack assemble multiply
 pixi run just hack run multiply full
 ```
 
-默认的 `summary` 保持 ROM 地址和源码行紧凑，并把每条 Hack+ 展开标为 `[i/n] 源伪指令 => 正式指令`。显式选择 `full` 后，还会增加完整源码文本，以及更多 driver 阶段和断言解释；如果只需要干净产物，可以选择 `none`。
+默认的 `summary` 为每个 A/C 机器字显示规范化源码，把 Hack+ 展开标为 `[i/n] 源伪指令 => 正式指令`，并将行内汇编注释放在最右侧。显式选择 `full` 后，会保留精确源码文本，并增加更多 driver 阶段和断言解释；
 
 输出位于 `isa/hack/.build/multiply.hack`。每条指令仍是标准的 16 位 Hack 机器字，只额外保留 ROM 地址、源码行和伪指令展开信息：
 
 ```text
-0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
-1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+0000000000000110 // ROM[0000] L5 [1/4] SET R0, 6 => @6 // RAM[0] = 被乘数
+1110110000010000 // ROM[0001] L5 [2/4] SET R0, 6 => D=A // RAM[0] = 被乘数
 ```
 
 这一步很适合把教材中的编码表、汇编源码和 Sail 解码规则放在一起对照。
@@ -172,16 +172,39 @@ pixi run just hack run multiply full
 ```ocaml
 type word = bits(16)
 type address = bits(15)
+type input_selector = bit
+type alu_control = bits(6)
+type destination_control = bits(3)
+type jump_control = bits(3)
 
 union instruction = {
   AInstruction : address,
-  CInstruction : (bit, bits(6), bits(3), bits(3))
+  CInstruction : (input_selector, alu_control, destination_control, jump_control)
 }
 
-mapping encdec : instruction <-> bits(16) = {
-  AInstruction(address) <-> 0b0 @ address,
+mapping encdec : instruction <-> word = {
+  AInstruction(value) <-> 0b0 @ value,
   CInstruction(a, comp, dest, jump) <-> 0b111 @ a @ comp @ dest @ jump
 }
+
+union hack_decode_result = {
+  Decoded : instruction,
+  DecodeIllegal : word
+}
+
+function decode_hack(encoded : word) -> hack_decode_result = {
+  match encoded[15] {
+    0b0 => Decoded(encdec(encoded)),
+    0b1 => {
+      match encoded[14 .. 13] {
+        0b11 => Decoded(encdec(encoded)),
+        _ => DecodeIllegal(encoded)
+      }
+    }
+  }
+}
+
+function encode_hack(instr : instruction) -> word = encdec(instr)
 ```
 
 Hack 只有两种机器指令：
@@ -191,7 +214,7 @@ Hack 只有两种机器指令：
 | A 指令 | `0vvvvvvvvvvvvvvv` | 把 15 位值装入 `A` |
 | C 指令 | `111accccccdddjjj` | 计算 ALU、写回目标，并可按条件跳转 |
 
-Sail 的双向 `mapping` 同时表达编码和解码。这比在解释器里手写一串掩码更接近 ISA 手册的写法。
+命名位向量类型让每个 C 指令字段的角色直接可见，同时不改变原始编码。紧凑的 `encdec` mapping 同时表达合法 A/C 编码的两个方向；`decode_hack` 再显式检查合法性：合法前缀调用 `encdec`，`100/101/110` 则在 `DecodeIllegal` 中保留原始机器字。`execute` 只接收已解码的 `instruction`，不负责编码或解码。
 
 ### 第二步：声明架构状态
 
@@ -252,7 +275,7 @@ programs/*.asm
   │  Sail 类型检查与 C 后端
   ▼
 .build/<program>.exe
-  │  执行到 HALT、ROM 末尾或步数上限
+  │  执行到 HALT 或步数上限；离开已加载映像会报错
   ▼
 检查源码中的 .assert
 ```
@@ -272,7 +295,7 @@ programs/*.asm
 
 ### 实验一：对照 A/C 指令编码
 
-1. 阅读 `encdec`；
+1. 阅读 `encdec`、`decode_hack` 和 `encode_hack`；
 2. 写一小段标准 Hack 汇编；
 3. 执行 `pixi run just hack assemble <程序名>`；
 4. 对照 `.hack` 中的 16 位机器字和 Project 06 的编码表。

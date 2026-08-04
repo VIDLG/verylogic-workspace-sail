@@ -1,10 +1,11 @@
 .description Iterative Fibonacci F(10) with loop control
 // Hack+ program: calculate F(10) iteratively.
-// R0 = N, R1 = current Fibonacci number, R2 = next number, R3 = iteration.
-SET R0, 10
-SET R1, 0
-SET R2, 1
-SET R3, 0
+// R0..R4 are standard assembler aliases for RAM[0]..RAM[4], not CPU registers.
+// RAM[0] = N, RAM[1] = current Fibonacci number, RAM[2] = next, RAM[3] = iteration.
+SET R0, 10 // RAM[0] = N
+CLR R1     // RAM[1] = current
+SET R2, 1  // RAM[2] = next
+CLR R3     // RAM[3] = iteration
 
 (LOOP)
 @R3
@@ -20,14 +21,8 @@ D=M
 D=D+M
 @R4
 M=D
-@R2
-D=M
-@R1
-M=D
-@R4
-D=M
-@R2
-M=D
+MOV R1, R2
+MOV R2, R4
 INC R3
 GOTO LOOP
 

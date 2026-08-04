@@ -48,7 +48,7 @@ def test_discovery_is_direct_only_and_requires_descriptions(
         workflow.source_path(outside)
 
 
-def test_artifact_comment_level_is_forwarded_to_tools(
+def test_artifact_and_execution_options_are_forwarded_to_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "program.asm"
@@ -59,8 +59,21 @@ def test_artifact_comment_level_is_forwarded_to_tools(
     monkeypatch.setattr(workflow, "PACKAGE_ROOT", tmp_path)
     monkeypatch.setattr(workflow, "command", lambda args, **_kwargs: commands.append(args))
 
-    workflow.assemble(entry)
-    workflow.run(entry, comments="none")
+    workflow.assemble(
+        entry,
+        max_steps=12,
+        hook="hooks/default.sail",
+    )
+    workflow.run(
+        entry,
+        max_steps=25,
+        hook="hooks/trace.sail",
+        comments="none",
+    )
 
+    assert ["--max-steps", "12"] == commands[0][5:7]
+    assert ["--hook", "hooks/default.sail"] == commands[0][7:9]
     assert commands[0][-2:] == ["--comments", "summary"]
+    assert ["--max-steps", "25"] == commands[1][5:7]
+    assert ["--hook", "hooks/trace.sail"] == commands[1][7:9]
     assert commands[1][-2:] == ["--comments", "none"]

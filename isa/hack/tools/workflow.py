@@ -12,7 +12,12 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 ROOT = PACKAGE_ROOT.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from isa.hack.tools.assembler import COMMENT_LEVELS, AssemblyError, source_description
+from isa.hack.tools.assembler import (
+    COMMENT_LEVELS,
+    AssemblyError,
+    normalize_hook_path,
+    source_description,
+)
 from tools import install_sail
 
 PROGRAMS = PACKAGE_ROOT / "programs"
@@ -26,6 +31,16 @@ class Program(TypedDict):
     name: str
     source: Path
     description: str
+
+
+def positive_int(value: str) -> int:
+    try:
+        result = int(value, 0)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from error
+    if result <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return result
 
 
 def source_path(value: Path) -> Path:
@@ -76,25 +91,37 @@ def check(sail: Path) -> None:
     command([str(sail), "--just-check", str(ISA_SOURCE)])
 
 
-def assemble(entry: Program, *, comments: str = "summary") -> None:
+def assemble(
+    entry: Program,
+    *,
+    max_steps: int | None = None,
+    hook: str | None = None,
+    comments: str = "summary",
+) -> None:
     output = output_prefix(entry)
     _ = output.parent.mkdir(parents=True, exist_ok=True)
-    command(
-        [
-            sys.executable,
-            str(ASSEMBLER),
-            str(source_path(entry["source"])),
-            "-o",
-            f"{output}.hack",
-            "--comments",
-            comments,
-        ]
-    )
+    arguments = [
+        sys.executable,
+        str(ASSEMBLER),
+        str(source_path(entry["source"])),
+        "-o",
+        f"{output}.hack",
+    ]
+    if max_steps is not None:
+        if max_steps <= 0:
+            raise ValueError("--max-steps must be a positive integer")
+        arguments.extend(("--max-steps", str(max_steps)))
+    if hook is not None:
+        arguments.extend(("--hook", normalize_hook_path(hook)))
+    arguments.extend(("--comments", comments))
+    command(arguments)
 
 
 def run(
     entry: Program,
     *,
+    max_steps: int | None = None,
+    hook: str | None = None,
     require_assertions: bool = False,
     comments: str = "summary",
 ) -> None:
@@ -107,6 +134,12 @@ def run(
         "--output",
         str(output),
     ]
+    if max_steps is not None:
+        if max_steps <= 0:
+            raise ValueError("--max-steps must be a positive integer")
+        arguments.extend(("--max-steps", str(max_steps)))
+    if hook is not None:
+        arguments.extend(("--hook", normalize_hook_path(hook)))
     if require_assertions:
         arguments.append("--require-assertions")
     arguments.extend(("--comments", comments))
@@ -148,10 +181,14 @@ def main() -> int:
         default="summary",
         help="explanatory artifact comments for assemble/run (default: summary)",
     )
+    _ = parser.add_argument("--max-steps", type=positive_int, help="assemble/run override for source .max_steps")
+    _ = parser.add_argument("--hook", help="assemble/run override for source .hook")
     args = parser.parse_args()
     action = cast(str, args.action)
     name = cast(str | None, args.program)
     comments = cast(str, args.comments)
+    max_steps = cast(int | None, args.max_steps)
+    hook = cast(str | None, args.hook)
 
     try:
         entries = discover_programs()
@@ -161,13 +198,15 @@ def main() -> int:
                 raise ValueError(f"{action} requires a program name")
             entry = selected_program(entries, name)
             if action == "assemble":
-                assemble(entry, comments=comments)
+                assemble(entry, max_steps=max_steps, hook=hook, comments=comments)
             else:
-                run(entry, comments=comments)
+                run(entry, max_steps=max_steps, hook=hook, comments=comments)
         elif name is not None:
             raise ValueError(f"{action} does not accept a program name")
         elif comments != "summary":
             raise ValueError(f"{action} does not accept --comments")
+        elif max_steps is not None or hook is not None:
+            raise ValueError(f"{action} does not accept --max-steps or --hook")
         elif action == "check":
             if sail is None:
                 raise AssertionError("check requires project-local Sail")

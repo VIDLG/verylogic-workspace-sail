@@ -4,23 +4,23 @@ set default-list := true
 list:
     python tools/workflow.py list
 
-# Type-check the Hack Sail model.
+# Fast standalone type-check of the Hack Sail model.
 check:
     python tools/workflow.py check
 
-# Assemble a program; comments: none, summary (default), or full.
-assemble program comments="summary":
-    python tools/workflow.py assemble {{ program }} --comments {{ comments }}
+# Assemble a program; optional metadata overrides follow the comment level.
+assemble program comments="summary" *options:
+    python tools/workflow.py assemble {{ program }} --comments {{ comments }} {{ options }}
 
 alias a := assemble
 
-# Execute a program; comments: none, summary (default), or full.
-run program comments="summary":
-    python tools/workflow.py run {{ program }} --comments {{ comments }}
+# Execute a program; optional CLI overrides follow the comment level.
+run program comments="summary" *options:
+    python tools/workflow.py run {{ program }} --comments {{ comments }} {{ options }}
 
 alias r := run
 
-# Run unit tests and every bundled program's Sail assertions.
+# Run the complete regression; end-to-end program builds type-check the model again.
 test:
     python tools/workflow.py test
 

@@ -196,6 +196,8 @@ SP LCL ARG THIS THAT
 SCREEN KBD
 ```
 
+`R0..R15` map directly to RAM addresses `0..15`; they are predefined assembler symbols, not architectural registers. `SP/LCL/ARG/THIS/THAT` are aliases for the first five of those same addresses.
+
 It then walks the lowered code:
 
 - a `Label` records the current ROM address;
@@ -275,7 +277,7 @@ The output contains two record classes.
 
 ```text
 //%hack format {"version":3}
-//%hack hook {"path":"hooks.sail"}
+//%hack hook {"path":"hooks/default.sail"}
 //%hack halt {"address":12}
 //%hack assert {"line":20,"mode":"bits","operator":"==","target":"R2","value":42}
 //%hack max_steps {"value":1000}
@@ -299,10 +301,10 @@ The optional `comments` argument controls explanatory word comments without chan
 | Level | Word annotation |
 | --- | --- |
 | `none` | No trailing explanation |
-| `summary` | ROM address and source line; Hack+ words also show `[i/n] source => canonical` |
-| `full` | Summary information plus the complete original source text |
+| `summary` | ROM/source location and normalized assembly for every word; Hack+ adds `[i/n] source => canonical`; inline comments stay at the far right |
+| `full` | Summary information plus the exact complete original source text |
 
-`summary` is the default. It keeps pseudoinstruction lowering visible while leaving ordinary A/C instructions compact. `//%hack` records are machine-readable execution metadata, so they are written at every level. Run `pixi run just hack assemble multiply`, then request `full` explicitly when you need the complete source text and driver explanations.
+`summary` is the default. It shows ordinary A/C source as well as pseudoinstruction lowering, with any inline assembly comment at the far right. `//%hack` records are machine-readable execution metadata, so they are written at every level. Run `pixi run just hack assemble multiply`, or override runtime metadata with `pixi run just hack assemble multiply summary --hook hooks/trace.sail --max-steps 10000`. CLI overrides are applied by `apply_runtime_overrides()` before `write_hack()`, so the artifact records the effective values.
 
 ## Why `load_hack()` exists
 
@@ -346,13 +348,14 @@ Collapsing both into “assembly failed” would hide which boundary broke.
 
 ```text
 CLI main
-└── assemble(source)
-    └── assemble_text(text)
-        ├── parse(text)
-        │   └── Parser.parse
-        ├── expand(statements)
-        ├── pass 1: labels
-        └── pass 2: symbols + encode
+├── assemble(source)
+│   └── assemble_text(text)
+│       ├── parse(text)
+│       │   └── Parser.parse
+│       ├── expand(statements)
+│       ├── pass 1: labels
+│       └── pass 2: symbols + encode
+├── apply_runtime_overrides(result)
 └── write_hack(result, output)
 
 executor

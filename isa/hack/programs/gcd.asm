@@ -1,8 +1,9 @@
 .description Subtraction-based Euclidean GCD of 1071 and 462
 // Hack+ program: Euclidean GCD by repeated subtraction.
-// Input values R0=1071 and R1=462; output R2=21.
-SET R0, 1071
-SET R1, 462
+// R0..R2 are standard assembler aliases for RAM[0]..RAM[2], not CPU registers.
+// Input: RAM[0]=1071, RAM[1]=462; expected output: RAM[2]=21.
+SET R0, 1071 // RAM[0] = first operand
+SET R1, 462  // RAM[1] = second operand
 
 (LOOP)
 @R0
@@ -15,29 +16,16 @@ D;JEQ
 D;JGT
 
 // R1 > R0: R1 <- R1 - R0.
-@R1
-D=M
-@R0
-D=D-M
-@R1
-M=D
+SUB R1, R0
 GOTO LOOP
 
 (R0_GREATER)
 // R0 > R1: R0 <- R0 - R1.
-@R0
-D=M
-@R1
-D=D-M
-@R0
-M=D
+SUB R0, R1
 GOTO LOOP
 
 (DONE)
-@R0
-D=M
-@R2
-M=D
+MOV R2, R0
 HALT
 
 .assert R2 == 21

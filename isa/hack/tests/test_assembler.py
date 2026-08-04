@@ -4,6 +4,7 @@ import pytest
 
 from isa.hack.tools.assembler import (
     AssemblyError,
+    apply_runtime_overrides,
     assemble_text,
     load_hack,
     source_description,
@@ -15,6 +16,7 @@ def test_valid_hack_symbols_and_numeric_label_rejection() -> None:
     result = assemble_text("($loop.1:)\n@$loop.1:\n0;JMP\n@variable_name\nM=1\n")
     assert result.words[0] == 0
     assert result.words[2] == 16
+    assert assemble_text("@R0\n@R15\n").words == [0, 15]
 
     for source in ("(123)\n", "(bad-name)\n", "@12abc\n", "@bad-name\n", "@\n"):
         with pytest.raises(AssemblyError):
@@ -37,6 +39,32 @@ def test_pseudoinstruction_expansion_preserves_source_mapping() -> None:
     assert all(record.source.text == "  SET R0, 16 // original comment" for record in result.records[:4])
     assert result.metadata.halt_addresses == (4,)
     assert result.metadata.assertions[0].target == "R0"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("MOV R1, R0", ["@R0", "D=M", "@R1", "M=D"]),
+        ("CLR R0", ["@R0", "M=0"]),
+        ("ADD R0, R1", ["@R1", "D=M", "@R0", "M=D+M"]),
+        ("SUB R0, R1", ["@R1", "D=M", "@R0", "M=M-D"]),
+        ("AND R0, R1", ["@R1", "D=M", "@R0", "M=D&M"]),
+        ("OR R0, R1", ["@R1", "D=M", "@R0", "M=D|M"]),
+        ("NEG R0", ["@R0", "M=-M"]),
+        ("NOT R0", ["@R0", "M=!M"]),
+        ("NOP", ["0"]),
+        ("JNE R0, DONE", ["@R0", "D=M", "@DONE", "D;JNE"]),
+    ],
+)
+def test_common_pseudoinstruction_expansions(source: str, expected: list[str]) -> None:
+    result = assemble_text(source)
+
+    assert [record.expansion.instruction for record in result.records if record.expansion] == expected
+    assert [
+        (record.expansion.index, record.expansion.count)
+        for record in result.records
+        if record.expansion
+    ] == [(index, len(expected)) for index in range(1, len(expected) + 1)]
 
 
 def test_annotated_hack_round_trip(tmp_path: Path) -> None:
@@ -71,7 +99,24 @@ def test_annotated_hack_round_trip(tmp_path: Path) -> None:
     loaded_plain = load_hack(output)
     assert loaded_plain.words == [1]
     assert loaded_plain.metadata.assertions == ()
-    assert loaded_plain.metadata.hook_path == "hooks.sail"
+    assert loaded_plain.metadata.hook_path == "hooks/default.sail"
+
+
+def test_runtime_overrides_replace_source_metadata_before_write(tmp_path: Path) -> None:
+    source = assemble_text(".hook hooks/default.sail\n.max_steps 9\n@0\n")
+    overridden = apply_runtime_overrides(
+        source,
+        max_steps=3,
+        hook="hooks/trace.sail",
+    )
+    output = tmp_path / "overridden.hack"
+
+    write_hack(overridden, output)
+    loaded = load_hack(output)
+
+    assert loaded.metadata.max_steps == 3
+    assert loaded.metadata.hook_path == "hooks/trace.sail"
+    assert loaded.words == source.words
 
 
 def test_hook_directive_defaults_normalizes_and_does_not_emit_words() -> None:
@@ -79,7 +124,7 @@ def test_hook_directive_defaults_normalizes_and_does_not_emit_words() -> None:
     custom = assemble_text(".hook hooks\\trace.sail\n@0\n")
 
     assert default.words == custom.words == [0]
-    assert default.metadata.hook_path == "hooks.sail"
+    assert default.metadata.hook_path == "hooks/default.sail"
     assert custom.metadata.hook_path == "hooks/trace.sail"
 
 
@@ -111,8 +156,7 @@ def test_hack_artifact_comment_levels_preserve_machine_contract(tmp_path: Path) 
     none_words = [line for line in contents["none"].splitlines() if line and not line.startswith("//")]
     assert all(len(line) == 16 for line in none_words)
     assert "//%hack assert" in contents["none"]
-    assert "ROM[0000] L1 [1/4] SET R0, 1 => @1" in contents["summary"]
-    assert "initialize R0" not in contents["summary"]
+    assert "ROM[0000] L1 [1/4] SET R0, 1 => @1 // initialize R0" in contents["summary"]
     assert "ROM[0000] L1: SET R0, 1 // initialize R0 [1/4] => @1" in contents["full"]
 
     default_output = tmp_path / "default.hack"
@@ -121,6 +165,17 @@ def test_hack_artifact_comment_levels_preserve_machine_contract(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="comment level"):
         write_hack(assembly, tmp_path / "invalid.hack", "verbose")
+
+
+def test_summary_shows_standard_assembly_and_places_inline_comment_last(tmp_path: Path) -> None:
+    assembly = assemble_text("@R0 // select RAM[0]\nD=M // load RAM[0]\n")
+    output = tmp_path / "ordinary.hack"
+
+    write_hack(assembly, output, "summary")
+
+    contents = output.read_text(encoding="utf-8")
+    assert "ROM[0000] L1 @R0 // select RAM[0]" in contents
+    assert "ROM[0001] L2 D=M // load RAM[0]" in contents
 
 
 @pytest.mark.parametrize(
@@ -217,7 +272,7 @@ def test_basic_alu_relational_assertions_do_not_change_machine_words() -> None:
         ".max_steps 1\n.max_steps 2\n",
         ".max_steps nope\n",
         ".hook\n",
-        ".hook hooks.sail\n.hook hooks/trace.sail\n",
+        ".hook hooks/default.sail\n.hook hooks/trace.sail\n",
         ".hook ../hooks.sail\n",
         ".hook /hooks.sail\n",
         ".hook C:\\hooks.sail\n",
@@ -240,6 +295,11 @@ def test_basic_alu_relational_assertions_do_not_change_machine_words() -> None:
         ".assert unsigned(R16) < 1\n",
         ".unknown 1\n",
         "SET R0 1\n",
+        "MOV R0 R1\n",
+        "ADD R0\n",
+        "NEG R0, R1\n",
+        "NOP R0\n",
+        "JNE R0 DONE\n",
         "D=Q\n",
     ],
 )
@@ -250,7 +310,7 @@ def test_malformed_inputs(source: str) -> None:
 
 def test_loader_rejects_bad_words_and_metadata(tmp_path: Path) -> None:
     output = tmp_path / "bad.hack"
-    hook = '//%hack hook {"path":"hooks.sail"}\n'
+    hook = '//%hack hook {"path":"hooks/default.sail"}\n'
     assertion = '//%hack assert {"line":1,"mode":"bits","operator":"==","target":"A","value":0}\n'
     malformed_assertions = (
         '//%hack assert {"line":1,"mode":"bits","target":"A","value":0}\n',
@@ -292,7 +352,7 @@ def test_loader_rejects_bad_words_and_metadata(tmp_path: Path) -> None:
         '//%hack format {"version":3}\n//%hack hook {"path":"hooks\\\\trace.sail"}\n0000000000000000\n',
         '//%hack format {"version":3}\n//%hack hook {"path":"../hooks.sail"}\n0000000000000000\n',
         '//%hack format {"version":3}\n//%hack hook {"path":"hooks.txt"}\n0000000000000000\n',
-        '//%hack format {"version":3}\n//%hack hook {"path":"hooks.sail"}\n//%hack hook {"path":"hooks/trace.sail"}\n0000000000000000\n',
+        '//%hack format {"version":3}\n//%hack hook {"path":"hooks/default.sail"}\n//%hack hook {"path":"hooks/trace.sail"}\n0000000000000000\n',
     ],
 )
 def test_loader_strictly_validates_hook_metadata(tmp_path: Path, metadata: str) -> None:
