@@ -45,11 +45,12 @@ The primary reading view—the place readers are expected to spend most of their
 
 ### Why Sail
 
-1. Define the ISA abstraction boundary and the criteria for a useful ISA source of truth.
-2. Compare Sail with prose/pseudocode, C/C++, Verilog/SystemVerilog, ad hoc models, and proof assistants by fitness for that boundary.
-3. Explain why Sail fits this workspace through typed bitvectors, executable semantics, code generation, and reusable formal-tool paths.
-4. State limitations explicitly: Sail is not RTL, a cycle-accurate simulator, or a proof by itself.
-5. Assign assemblers, drivers, generated C, hardware, and prose to their correct neighboring layers.
+1. Establish the educational thesis: Sail preserves necessary ISA complexity while reducing notation- and implementation-specific noise.
+2. Demonstrate the thesis with two concrete code paths: Hack `AM=D` old-state semantics and RISC-V `ADDI` encoding, sign extension, XLEN, and `x0` behavior.
+3. Compare prose/pseudocode, C/C++, Verilog/SystemVerilog, ad hoc models, and proof assistants by the extra work each introduces when used as the ISA source of truth.
+4. Explain why Sail fits this workspace through typed bitvectors, executable semantics, code generation, and reusable formal-tool paths.
+5. State limitations explicitly: Sail is not RTL, a cycle-accurate simulator, or a proof by itself.
+6. Assign assemblers, drivers, generated C, hardware, and prose to their correct neighboring layers.
 
 ### Hack overview
 

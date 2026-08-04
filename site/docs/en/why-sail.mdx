@@ -6,130 +6,270 @@ title: Why Sail
 
 [Documentation home](/) · [中文](/zh/why-sail) · [Start with Hack →](/hack/)
 
-An instruction-set architecture is a contract between software and a processor implementation. It defines instruction encodings, architectural state, and the state transition caused by each instruction. It does **not** prescribe one pipeline, circuit, simulator, or proof technique.
+A single instruction may sound simple: read some values, compute a result, and write it back. Describing a complete instruction set quickly adds more questions. How is a machine word divided into fields? How wide is each value? Does an operation use old or new state? How does arithmetic truncate? When is an exception taken? How can different implementations check that they mean the same thing?
 
-Sail fits this boundary unusually well: it is precise enough to execute and check, but remains close to the pseudocode and encoding tables people expect in an ISA manual. This workspace therefore uses Sail as the source of truth for ISA behavior, while keeping assemblers, program drivers, generated C, and hardware implementations in their proper layers.
+That is necessary ISA complexity; it cannot be removed. The problem is that an ill-fitting notation adds another layer of complexity that readers must cross before they can see the machine rules themselves.
 
-## What an ISA description must do
+> **Sail does not make the ISA itself simple. It keeps the complexity at the ISA layer.**
 
-For this workspace, a useful ISA description should:
+It preserves encodings, architectural state, and state transitions while avoiding most details of a host language, one particular pipeline, or proof-engineering scaffolding. This matters in education: most of the code a student reads should be about the machine, not about the framework used to express it.
 
-1. make instruction bits and fixed-width values explicit;
-2. state architectural effects without committing to a microarchitecture;
-3. be readable during teaching and review;
-4. execute as a reference model rather than remain only prose;
-5. support tests from the same semantics readers inspect;
-6. leave a path to code generation and formal tools without maintaining another hand-written model.
-
-No notation wins every category. Sail is the best center of gravity here because it covers all six at once.
-
-## The alternatives solve different problems
-
-| Expression | Best at | What is missing when used as the ISA source of truth |
-| --- | --- | --- |
-| Prose and encoding tables | Publishing an approachable architecture manual | Ambiguities and omissions are not executable; examples and implementations can drift |
-| C or C++ reference emulator | Fast execution, debugger and device ecosystems, production simulation | ISA structure, bit widths, and encoding relations often live in conventions and helper code rather than the language's model |
-| Verilog/SystemVerilog or another HDL | RTL, clocks, pipelines, interfaces, synthesis, and implementation verification | Microarchitectural detail is mixed with software-visible behavior, although many implementations may implement the same ISA |
-| Ad hoc Python/Rust/DSL model | Rapid prototypes and project-specific integration | The project must build and maintain its own ISA types, validation, documentation, and analysis ecosystem |
-| Coq, Isabelle, Lean, or HOL | Machine-checked definitions and deep proofs | A larger proof-engineering entry cost for readers who first need to run and understand an ISA |
-| Sail | Executable, typed ISA semantics with reusable backends | It is not RTL, a cycle-accurate simulator, or a proof by itself |
-
-The comparison is about **fitness for the ISA layer**, not whether Sail is universally better than these languages.
-
-## Compared with Verilog and SystemVerilog
-
-An HDL describes a hardware realization: registers updated on clock edges, combinational paths, pipeline stages, stalls, buses, and implementation interfaces. Those details matter when building a core, but they are intentionally below the ISA contract. An interpreter, an in-order core, and an out-of-order core can all implement the same instruction behavior.
-
-Using RTL as the only architectural specification creates two problems:
-
-- the meaning of one instruction is distributed across decode, pipeline, forwarding, exception, and commit logic;
-- implementation choices can be mistaken for architectural requirements.
-
-Sail instead lets an instruction read like one architectural transition. Its `mapping` construct can place encoding and decoding together, while fixed-width bitvectors make field sizes part of the checked model. RTL can then be tested against that independent reference.
-
-This is a complement, not a replacement. Use Verilog/SystemVerilog to answer **how this processor is built and timed**. Use Sail to answer **what every compliant processor must make software observe**. In the Hack learning path, nand2tetris HDL remains the right tool for gates and chips; `hack.sail` starts at the next abstraction boundary.
-
-## Compared with C or C++
-
-A hand-written C or C++ emulator can be fast and can integrate with mature operating-system, debugger, and device infrastructure. It is often the right implementation artifact. The difficulty is using it as the primary specification:
-
-- fixed-width relationships and signedness depend on disciplined use of host-language types and helpers;
-- decoding and encoding are commonly separate functions that must be kept consistent;
-- optimizations, caches, devices, and control flow can obscure the architectural rule being specified;
-- a prose manual, emulator, and formal model can become three independently maintained meanings of the ISA.
-
-Sail moves those concerns into an ISA-oriented language. Numeric and bitvector widths participate in type checking, instruction forms are explicit data, and bidirectional mappings can connect those forms to machine words. The same model can then generate C for execution. In other words, this workspace still benefits from C as a runtime target without making hand-written C the semantic source.
-
-Generated C is not automatically fast enough for every production emulator, nor does it supply a complete system around the CPU. A tuned C/C++ simulator remains appropriate when throughput, timing models, binary translation, or a large device ecosystem is the primary requirement.
-
-## Compared with prose and pseudocode
-
-Prose explains motivation, exceptions, and intent better than source code. Encoding diagrams are excellent lookup tools. Both remain necessary documentation.
-
-They are weak test oracles, however. Terms such as “the old register value,” overflow behavior, legal field widths, and the order of simultaneous effects can be interpreted differently by different implementers. Vendor pseudocode improves structure but is useful as an executable standard only when its language and tooling are precisely defined.
-
-Sail does not eliminate prose. It gives prose an executable companion: readers can inspect a compact transition, the type checker can reject inconsistent widths, and tests can run against that exact transition. Documentation should explain the model; it should not silently become a second model.
-
-## Compared with a proof assistant
-
-A direct definition in Coq, Isabelle, Lean, or HOL is a strong foundation when the main goal is machine-checked proof. It can also demand substantial proof-language and library knowledge before a contributor can execute a first program or change an instruction.
-
-Sail occupies a pragmatic middle ground. Its surface language is designed for architecture engineers, its models execute, and its toolchain can produce definitions for theorem-proving backends. That creates a route from an engineer-facing model to formal reasoning.
-
-The boundary is important: type checking is not proof of ISA correctness, generated theorem-prover definitions are not completed proofs, and this workspace currently makes no formal-verification claim for its Hack model.
-
-## Why Sail is a good fit here
-
-The Hack model demonstrates the properties this workspace wants future ISA modules to preserve:
+## Separate the three layers first
 
 ```mermaid
 flowchart TD
-    Manual[ISA prose and encoding tables] --> Model[Sail model]
-    Model --> Types[Width and type checking]
-    Model --> Native[Generated C executable]
-    Model --> Formal[Formal-tool path]
-    Programs[Test programs] --> Native
-    Native --> Oracle[Architectural test oracle]
-    Oracle --> Feedback[Teaching and regression feedback]
+    Manual[Prose diagrams and examples] --> ISA[Sail ISA model]
+    ISA --> Emulator[C/C++ or generated emulator]
+    ISA --> RTL[Verilog/SystemVerilog RTL]
+    ISA --> Proof[Proof tools]
 ```
 
-- **The code resembles the contract.** Instruction forms, encodings, registers, and transitions are visible rather than hidden in framework machinery.
-- **Bit-level mistakes become checkable.** `bits(n)` and related numeric constraints express facts that comments in a general-purpose language cannot enforce.
-- **One model is both readable and runnable.** The C backend turns the inspected semantics into the executable used by tests.
-- **Tests judge architectural state in Sail.** Python coordinates tools, but it does not reimplement Hack execution.
-- **The model stays independent of one implementation.** The same semantics can serve teaching, software bring-up, RTL comparison, and future formal work.
-- **There is evidence beyond a toy ISA.** The Sail project publishes models and tooling for architectures including RISC-V, Arm-derived models, MIPS, x86 fragments, and CHERI variants.
+These representations complement rather than eliminate one another. The question is: **which one should be the implementation-independent source of truth in the middle?**
 
-## What choosing Sail does not mean
+A small Hack example and a realistic RISC-V example make the tradeoff concrete.
 
-Choosing Sail does not make every file a Sail file or collapse every abstraction into the ISA model.
+## Example 1: where should Hack `AM=D` write memory?
 
-| Concern in this workspace | Owner | Why |
-| --- | --- | --- |
-| Instruction encoding and architectural transitions | Sail model | This is the ISA contract |
-| Assembly syntax, labels, and pseudoinstruction lowering | Python assembler | These are source-language concerns |
-| Program loading, bounds, and generated `main()` | Executor and Sail driver | These vary by program and platform |
-| Native compilation | Sail C backend and host C compiler | C is the execution target, not a second hand-written ISA |
-| Gates, timing, and pipelines | An HDL project, if added | These are implementation concerns |
-| Explanations and learning sequence | Documentation | Prose teaches intent and context |
+A Hack C-instruction can update `A`, `D`, and memory `M` in one step. For example:
 
-Sail also has real costs: it is a specialized language, its ecosystem is smaller than C/C++ or SystemVerilog, editor support is less mature, and some backends or large models require specialist knowledge. This repository mitigates setup cost by pinning Sail and wrapping common tasks, but it should not hide those tradeoffs.
+```asm
+AM=D
+```
 
-## A practical decision rule
+It writes `D` to `A` and to RAM. The easy-to-miss rule is that the RAM address must use the **old value of `A` at the start of the instruction**, not the value just written to `A`.
 
-Choose the primary representation by the question you need to answer:
+Given this initial state:
 
-- **What must an instruction mean on every implementation?** Start with Sail.
-- **How should a person learn or look up the architecture?** Write prose and diagrams beside the Sail model.
-- **How is this core implemented cycle by cycle?** Use an HDL.
-- **How do we run a highly optimized full-system simulator?** Use a simulator framework or tuned C/C++, with the Sail model as a possible oracle.
-- **How do we prove a security or correctness theorem?** Use Sail's formal backends where suitable, or define the model directly in a proof assistant when that is the better proof-engineering choice.
+```text
+A = 100
+D = 7
+```
 
-For this educational workspace, the central question is the first one. That is why Sail sits at the center, with the other representations connected around it rather than treated as competitors to eliminate.
+execution must produce:
+
+```text
+A = 7
+RAM[100] = 7
+```
+
+not `RAM[7] = 7`.
+
+### Prose: easy to read, and easy to miss one sentence
+
+A manual can say:
+
+> If one instruction writes both A and M, M uses the value of A at the start of the instruction as its address.
+
+That sentence is essential for learning, but it cannot execute itself. An emulator, RTL implementation, and tests must each implement it again. If one of them overlooks “at the start,” the project gains a second meaning of the machine.
+
+### C or C++: statement order quietly becomes semantics
+
+The following is natural sequential code, but it is wrong for Hack:
+
+```c
+if (write_a) {
+    cpu.A = out;
+}
+if (write_m) {
+    cpu.ram[cpu.A & 0x7fff] = out; // Wrong: this observes the new A
+}
+```
+
+The fix is straightforward: save `old_a` first. But the specification fact is now hidden among a temporary variable, a mask, and statement ordering. The project must also establish by convention that:
+
+- `A` is 16 bits while a RAM address is 15 bits;
+- `out` truncates correctly;
+- the decoder produces `write_a` and `write_m` correctly;
+- the encoder, disassembler, and emulator agree.
+
+C and C++ can implement the emulator correctly. The languages simply do not know that these pieces form an ISA or check those relationships for the project.
+
+### Verilog or SystemVerilog: implementation details surround the rule
+
+RTL introduces more information that is necessary for hardware but not part of the ISA:
+
+```verilog
+always_ff @(posedge clk) begin
+  if (reset) begin
+    A <= '0;
+  end else if (execute_valid && !pipeline_stall) begin
+    if (dest_a) A <= alu_out;
+  end
+end
+
+assign ram_we    = execute_valid && dest_m;
+assign ram_addr  = old_a[14:0];
+assign ram_wdata = alu_out;
+```
+
+Clocks, reset, valid signals, stalls, RAM interfaces, and pipeline placement are real implementation questions, but they are not the architectural meaning of `AM=D`. A non-pipelined core and an out-of-order core will have different RTL while owing software the same result.
+
+RTL is the right answer to “how is this processor built?” It is a poor sole source for “what must every Hack processor do?”
+
+### Sail: almost every line is a machine rule
+
+The actual `hack.sail` model saves old state and then makes each write explicit:
+
+```ocaml
+let old_a = A;
+let out = alu(comp, D, y);
+
+if dest[2] == 0b1 then A = out else ();
+if dest[1] == 0b1 then D = out else ();
+if dest[0] == 0b1 then RAM[unsigned(ram_address(old_a))] = out else ();
+```
+
+The relevant widths also belong to the model:
+
+```ocaml
+type word = bits(16)
+type address = bits(15)
+
+register A : word
+register RAM : vector(32768, word)
+```
+
+The complexity remains, but nearly every line answers an ISA question: what is old state, what is the result, which destinations are written, and how wide is an address? There is no pipeline or clock, and C masks do not have to stand in for architectural types.
+
+## Example 2: RISC-V `ADDI` is more than “one addition”
+
+RISC-V `ADDI` is often summarized as:
+
+```text
+x[rd] = x[rs1] + immediate
+```
+
+Its actual architectural contract also says that:
+
+1. the instruction is 32 bits and the immediate comes from `inst[31:20]`;
+2. the 12-bit immediate is sign-extended to the current XLEN;
+3. `rs1` and `rd` are five-bit register identifiers;
+4. arithmetic is performed at XLEN and keeps the low XLEN bits;
+5. reading `x0` returns zero and writing `x0` has no effect;
+6. `funct3` and the opcode must match the `ADDI` encoding.
+
+“One addition” is approachable prose. These details are what make it an executable, testable ISA rule.
+
+### C or C++: conventions rebuild a small bit-level language
+
+An interpreter branch may look like this:
+
+```c
+uint32_t rd  = (insn >> 7)  & 0x1f;
+uint32_t rs1 = (insn >> 15) & 0x1f;
+uint_xlen_t imm = sext12(insn >> 20);
+uint_xlen_t result = cpu.x[rs1] + imm;
+
+if (rd != 0) {
+    cpu.x[rd] = result;
+}
+```
+
+It can run correctly, but much of the ISA depends on project-defined conventions:
+
+- whether `uint_xlen_t` is 32 or 64 bits;
+- whether `sext12` handles every boundary correctly;
+- whether `cpu.x[0]` always remains zero;
+- where the opcode and `funct3` checks live;
+- whether the encoder performs exactly the inverse bit operations.
+
+A complete project commonly maintains an encoding table, decoder, executor, disassembler, and tests. The problem is not that C cannot express the ISA. It is that **once one architectural fact is scattered across those components, engineering discipline must keep them synchronized**.
+
+### RTL: one processor organization must also be chosen
+
+Once `ADDI` enters RTL, the designer must decide where it decodes, where the immediate is extended, when registers are read, how values are forwarded, when the instruction commits, and what stalls or flushes do. Building a processor requires those answers; the RISC-V ISA does not mandate one answer.
+
+When one core's RTL stands in for the ISA specification, a student often sees pipeline control before seeing the encoding and architectural effect of `ADDI`.
+
+### Sail: encoding, types, and behavior share one language
+
+The Sail project's RISC-V example first defines an instruction form and connects it to a 32-bit machine word:
+
+```ocaml
+union clause ast = ITYPE : (bits(12), regbits, regbits, iop)
+
+mapping clause encdec =
+  ITYPE(imm, rs1, rd, op)
+    <-> imm @ rs1 @ encdec_iop(op) @ rd @ 0b0010011
+```
+
+Execution uses the same `imm`, `rs1`, `rd`, and `op`:
+
+```ocaml
+function clause execute (ITYPE (imm, rs1, rd, op)) = {
+  let rs1_val = X(rs1);
+  let immext : xlenbits = EXTS(imm);
+  let result : xlenbits = match op {
+    RISCV_ADDI => rs1_val + immext,
+    /* other I-type operations */
+  };
+  X(rd) = result;
+  true
+}
+```
+
+The surrounding model still defines `xlenbits`, `X`, and `EXTS`. The difference is that these abstractions remain inside one ISA type-and-state system:
+
+- `bits(12)` states the immediate width;
+- `xlenbits` states that the result follows XLEN;
+- `EXTS` states that extension is signed;
+- `X` centralizes architectural register rules including `x0`;
+- `encdec` makes instruction structure and machine encoding one checked relationship.
+
+The reader mostly sees RISC-V rather than a host language or one core's organization.
+
+## What the two examples show
+
+Hack and RISC-V differ greatly in scale, but both require one specification to keep **machine words, types, state, and behavior** consistent.
+
+| Representation | Extra work or noise when used as the primary ISA specification |
+| --- | --- |
+| Prose and tables | Require a separate executable model; ambiguity, cross-references, and drift are caught only by review and tests |
+| C or C++ | Host integers, masks, conversions, helpers, and control flow surround ISA rules; encoding and decoding are commonly maintained separately |
+| Python, Rust, or a custom DSL | May be concise, but the project must build its own ISA types, checker, backends, and formal interfaces |
+| Verilog/SystemVerilog | Clocks, reset, pipelines, handshakes, forwarding, caches, and interfaces belong to one implementation rather than the ISA |
+| Coq, Isabelle, Lean, or HOL | Can support the strongest proofs, but beginners meet proof languages, libraries, and proof engineering before running a first instruction |
+| Sail | Still requires a specialized language and toolchain, but core code mostly corresponds directly to encodings, architectural state, and instruction semantics |
+
+Sail's advantage is therefore not that its code is always shortest. It is that **ISA information density is high and unrelated noise is low**.
+
+## Why that matters for education
+
+An educational model must do more than produce the correct answer. It should help a student explain why.
+
+- `bits(12)` reveals an immediate's width instead of making the reader infer it from a `0xfff` mask;
+- `old_a` reveals an old-state rule instead of making the reader guess from C assignment order;
+- `mapping` lets an encoding table and decode rule be read together;
+- after a change, the same model can be type-checked, compiled to C, and exercised by tests;
+- the semantics can later connect to RTL comparison or formal tools without beginning from an unrelated model.
+
+That creates a useful learning loop:
+
+```text
+read the rule → change the rule → run the rule → observe the consequence in tests
+```
+
+## Choosing Sail does not exclude other languages
+
+This workspace still chooses tools by question:
+
+| Question | Suitable representation |
+| --- | --- |
+| How should people learn and look up the architecture? | Prose, diagrams, and examples |
+| What exactly does each instruction mean to software? | Sail ISA model |
+| How are assembly syntax, labels, and pseudoinstructions handled? | Python assembler |
+| How do we obtain a native executable reference? | Sail C backend and a host C compiler |
+| How is a processor implemented cycle by cycle? | An HDL such as Verilog/SystemVerilog |
+| How are security or correctness theorems proved? | Sail formal backends or a direct proof-assistant model |
+
+Sail has costs too. It is a specialized language with a smaller ecosystem and less mature editor support than C/C++ or SystemVerilog; large models and some backends still require specialist knowledge. Sail is not RTL, not a cycle-accurate simulator, and type checking is not a correctness proof.
+
+The reason for choosing it here is narrower and stronger: **this workspace first needs to teach and execute ISAs, and Sail keeps a student's attention on the ISA.**
 
 ## Further reading
 
-- [Sail project and capability overview](https://github.com/rems-project/sail)
+- [Continue with the Hack model and execution path →](/hack/tutorial)
+- [Sail project and RISC-V example](https://github.com/rems-project/sail)
+- [Sail RISC-V model](https://github.com/riscv/sail-riscv)
 - [Sail Language Reference](https://alasdair.github.io/manual.html)
 - [Detailed Models of Instruction Set Architectures: From Pseudocode to Formal Semantics](https://doi.org/10.1145/3290384)
-- [See the choice applied to Hack →](/hack/tutorial)
