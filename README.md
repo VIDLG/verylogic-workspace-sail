@@ -9,6 +9,7 @@ An educational workspace for specifying, executing, and testing instruction-set 
 | Goal | Entry point |
 | --- | --- |
 | Run the Hack model | [Quick start](#quick-start) |
+| Understand why the workspace uses Sail | [Why Sail](https://vidlg.github.io/verylogic-workspace-sail/why-sail) |
 | Learn Hack and Sail | [Hack tutorial](https://vidlg.github.io/verylogic-workspace-sail/hack/tutorial) |
 | Study instruction semantics | [Hack ISA](https://vidlg.github.io/verylogic-workspace-sail/hack/isa) |
 | Understand the assembler and executor | [Hack documentation](https://vidlg.github.io/verylogic-workspace-sail/hack/) |
@@ -17,7 +18,7 @@ An educational workspace for specifying, executing, and testing instruction-set 
 
 ## Why Sail
 
-An ISA is the software-visible contract of a processor: instruction encodings, architectural state, and the state transition produced by each instruction. Sail lets one model serve as a readable specification, an executable implementation, and input to code-generation and formal-tool backends.
+An ISA is the software-visible contract of a processor: instruction encodings, architectural state, and the state transition produced by each instruction. Sail lets one model serve as a readable specification, an executable implementation, and input to code-generation and formal-tool backends. The documentation's [Why Sail guide](https://vidlg.github.io/verylogic-workspace-sail/why-sail) compares that role with prose, C/C++, Verilog/SystemVerilog, ad hoc models, and proof assistants—and explains when those alternatives remain the better tool.
 
 This workspace adds the module-specific pieces needed to teach and test an ISA end to end:
 

@@ -9,6 +9,7 @@
 | 目标 | 入口 |
 | --- | --- |
 | 运行 Hack 模型 | [快速开始](#快速开始) |
+| 理解工作区为什么选择 Sail | [为什么选择 Sail](https://vidlg.github.io/verylogic-workspace-sail/zh/why-sail) |
 | 学习 Hack 与 Sail | [Hack 入门教程](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/tutorial) |
 | 学习指令语义 | [Hack ISA](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa) |
 | 理解汇编器和执行器 | [Hack 文档](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/) |
@@ -17,7 +18,7 @@
 
 ## 为什么使用 Sail
 
-ISA 是处理器对软件公开的契约，包括指令编码、架构状态，以及每条指令产生的状态转换。Sail 可以让同一份模型同时作为可读规范、可执行实现，以及代码生成和形式化工具的输入。
+ISA 是处理器对软件公开的契约，包括指令编码、架构状态，以及每条指令产生的状态转换。Sail 可以让同一份模型同时作为可读规范、可执行实现，以及代码生成和形式化工具的输入。文档中的[为什么选择 Sail](https://vidlg.github.io/verylogic-workspace-sail/zh/why-sail)进一步比较了它与自然语言、C/C++、Verilog/SystemVerilog、临时模型和证明助理的定位，也说明了什么场景下其他工具仍然更合适。
 
 本工作区在 Sail 模型之外补齐教学和测试一条 ISA 所需的模块化工具：
 

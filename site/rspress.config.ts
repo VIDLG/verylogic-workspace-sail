@@ -40,7 +40,10 @@ export default defineConfig({
       '/': [
         {
           text: 'Workspace',
-          items: [{ text: 'Documentation home', link: '/' }],
+          items: [
+            { text: 'Documentation home', link: '/' },
+            { text: 'Why Sail', link: '/why-sail' },
+          ],
         },
         {
           text: 'Hack',
@@ -62,7 +65,10 @@ export default defineConfig({
       '/zh/': [
         {
           text: '工作区',
-          items: [{ text: '文档首页', link: '/zh/' }],
+          items: [
+            { text: '文档首页', link: '/zh/' },
+            { text: '为什么选择 Sail', link: '/zh/why-sail' },
+          ],
         },
         {
           text: 'Hack',

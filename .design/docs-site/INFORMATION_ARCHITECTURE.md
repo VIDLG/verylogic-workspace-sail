@@ -4,15 +4,17 @@
 
 Reader needs are ranked by expected frequency:
 
-1. **Learners** run a Hack example, inspect the generated artifacts, and understand the ISA.
-2. **Contributors** trace or change the assembler, executor, workflow, and tests.
-3. **Maintainers** add another self-contained ISA module and its documentation.
+1. **Newcomers and evaluators** understand why Sail is used at the ISA layer and where prose, C/C++, HDL, custom models, and proof assistants still fit.
+2. **Learners** run a Hack example, inspect the generated artifacts, and understand the ISA.
+3. **Contributors** trace or change the assembler, executor, workflow, and tests.
+4. **Maintainers** add another self-contained ISA module and its documentation.
 
-The primary reading view—the place readers are expected to spend most of their time—is a long-form ISA article in the Rspress content pane, with the locale-specific sidebar preserving learning context. Navigation should reach any article within three choices: locale, ISA, article.
+The primary reading view—the place readers are expected to spend most of their time—is a long-form article in the Rspress content pane, with the locale-specific sidebar preserving learning context. Navigation should reach any article within three choices: locale, section, article.
 
 ## Site Map
 
 - Documentation home `/` and `/zh/`
+  - Why Sail `/why-sail` and `/zh/why-sail`
   - Hack overview `/hack/` and `/zh/hack/`
     - Tutorial `/hack/tutorial` and `/zh/hack/tutorial`
     - Instruction set `/hack/isa` and `/zh/hack/isa`
@@ -26,8 +28,8 @@ The primary reading view—the place readers are expected to spend most of their
 
 ## Navigation Model
 
-- **Primary navigation**: the site title/home link and locale switcher in the Rspress header. The workspace home selects an ISA rather than duplicating each ISA's task menu.
-- **Secondary navigation**: a locale-specific sidebar grouped as Workspace, Hack, and Toolchain internals. Within Hack, the order is overview, tutorial, ISA, then Evolve Hack; the advanced group contains assembler, then execution.
+- **Primary navigation**: the site title/home link and locale switcher in the Rspress header. The workspace home first explains the shared Sail approach, then selects an ISA rather than duplicating each ISA's task menu.
+- **Secondary navigation**: a locale-specific sidebar grouped as Workspace, Hack, and Toolchain internals. Workspace contains the documentation home followed by Why Sail. Within Hack, the order is overview, tutorial, ISA, then Evolve Hack; the advanced group contains assembler, then execution.
 - **Utility navigation**: repository and package-reference links appear contextually in page introductions.
 - **Small screens**: use the Rspress theme's collapsible sidebar and locale selector without a second custom navigation system.
 - **Maximum depth**: three levels: locale, ISA, article.
@@ -36,9 +38,18 @@ The primary reading view—the place readers are expected to spend most of their
 
 ### Workspace documentation home
 
-1. Choose an ISA module.
-2. See the purpose and maturity of each available module.
-3. Reach repository setup and contribution information.
+1. Explain the workspace's executable-ISA approach and lead to Why Sail.
+2. Choose an ISA module.
+3. See the purpose and maturity of each available module.
+4. Reach repository setup and contribution information.
+
+### Why Sail
+
+1. Define the ISA abstraction boundary and the criteria for a useful ISA source of truth.
+2. Compare Sail with prose/pseudocode, C/C++, Verilog/SystemVerilog, ad hoc models, and proof assistants by fitness for that boundary.
+3. Explain why Sail fits this workspace through typed bitvectors, executable semantics, code generation, and reusable formal-tool paths.
+4. State limitations explicitly: Sail is not RTL, a cycle-accurate simulator, or a proof by itself.
+5. Assign assemblers, drivers, generated C, hardware, and prose to their correct neighboring layers.
 
 ### Hack overview
 
@@ -49,7 +60,7 @@ The primary reading view—the place readers are expected to spend most of their
 
 ### Tutorial
 
-1. Explain Hack, nand2tetris, NandGame, and Sail.
+1. Explain Hack, nand2tetris, NandGame, and Sail in the local learning context, while linking global tool-choice rationale to Why Sail.
 2. Run and inspect one program.
 3. Introduce the executable-model pipeline.
 4. Offer exercises and external resources.
@@ -90,6 +101,13 @@ The primary reading view—the place readers are expected to spend most of their
 4. Link to long-form explanations rather than duplicating them.
 
 ## User Flows
+
+### Evaluate the modeling approach
+
+1. Reader lands on the workspace home and opens Why Sail.
+2. Reader identifies the question they need to answer: architectural meaning, human explanation, hardware implementation, optimized simulation, or formal proof.
+3. Reader compares each representation at the correct abstraction layer rather than treating all languages as direct substitutes.
+4. Reader continues to Hack when the goal is to inspect and execute ISA semantics.
 
 ### First successful run
 
@@ -139,6 +157,7 @@ The primary reading view—the place readers are expected to spend most of their
 | --- | --- | --- |
 | Instruction-set module | ISA module | Use for `isa/<name>/` as a unit |
 | Published prose | Documentation | Avoid “documentation library” when “documentation” is enough |
+| Global technology rationale | Why Sail | Cross-ISA comparison belongs at Workspace level, not inside one ISA tutorial |
 | Introductory sequence | Tutorial | Hands-on, ordered learning |
 | Exact local syntax | Package reference | Lives beside code in `isa/<isa>/README*` |
 | Python coordinator | workflow | Preserve the implementation's term |
@@ -153,12 +172,14 @@ The primary reading view—the place readers are expected to spend most of their
 | --- | --- | --- |
 | Rspress locale shell | All site pages | English and Chinese labels and routes |
 | ISA sidebar group | Every ISA section | Page labels are localized; order is shared |
-| Article opening | Tutorial, ISA, evolution, assembler, execution | States the question answered and links to neighboring context |
+| Article opening | Why Sail, tutorial, ISA, evolution, assembler, execution | States the question answered and links to neighboring context |
+| Cross-layer comparison table | Why Sail | Uses the same criteria and ordering in both locales |
 | Package-reference link | ISA articles | Points to exact commands and directives beside source |
 | Previous/next path | Ordered Hack articles | Moves through tutorial → ISA → evolution → assembler → execution |
 
 ## Content Growth Plan
 
+- Cross-ISA concepts and workspace-wide technology choices live directly under `site/docs/<locale>/`; they must not be duplicated into every ISA subtree.
 - Each new ISA receives one parallel `site/docs/<locale>/<isa>/` subtree.
 - Start with overview, tutorial, and ISA; add tool-specific pages only when that ISA has those tools.
 - Keep article depth flat beneath each ISA. Split an article only when it has an independent reader task and stable navigation label.
@@ -167,8 +188,9 @@ The primary reading view—the place readers are expected to spend most of their
 
 ## URL Strategy
 
-- Default English pattern: `/<isa>/<article>`.
-- Chinese pattern: `/zh/<isa>/<article>`.
+- Global English concepts use `/<concept>`, such as `/why-sail`; global Chinese concepts use `/zh/<concept>`.
+- Default English ISA pattern: `/<isa>/<article>`.
+- Chinese ISA pattern: `/zh/<isa>/<article>`.
 - Rspress omits the default `en` locale from published URLs; `zh` remains explicit.
 - ISA segments use lowercase stable module names such as `hack`.
 - Overview routes come from `index.mdx`, for example `/hack/` and `/zh/hack/`.

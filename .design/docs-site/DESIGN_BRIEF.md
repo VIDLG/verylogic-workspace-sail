@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Build a bilingual documentation site for an educational Sail workspace. The site should help readers run an ISA model, learn the modeled ISA, and understand the supporting assembler and execution workflow without mixing repository-maintenance decisions into reader-facing content.
+Build a bilingual documentation site for an educational Sail workspace. The site should help readers understand why Sail is used for ISA semantics, run an ISA model, learn the modeled ISA, and understand the supporting assembler and execution workflow without mixing repository-maintenance decisions into reader-facing content.
 
 ## Audiences
 
@@ -12,11 +12,12 @@ Build a bilingual documentation site for an educational Sail workspace. The site
 
 ## Core jobs
 
-1. Run a working example quickly.
-2. Understand the Hack ISA before reading implementation code.
-3. Follow assembly source through machine code and native execution.
-4. Find exact module commands and source directives.
-5. Add or maintain an ISA module without coupling it to Hack internals.
+1. Understand why Sail is the workspace's ISA-level source of truth and where other representations still fit.
+2. Run a working example quickly.
+3. Understand the Hack ISA before reading implementation code.
+4. Follow assembly source through machine code and native execution.
+5. Find exact module commands and source directives.
+6. Add or maintain an ISA module without coupling it to Hack internals.
 
 ## Constraints
 
