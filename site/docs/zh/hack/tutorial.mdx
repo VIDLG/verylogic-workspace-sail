@@ -148,17 +148,17 @@ Assertion failed: assertion R2 == 0x002B from source line 20 failed
 ### 4. 查看真正执行的机器码
 
 ```sh
-pixi run just hack asm multiply summary
+pixi run just hack assemble multiply
 pixi run just hack run multiply full
 ```
 
-`summary` 只保留紧凑的 ROM 地址和源码行号。默认的 `full` 会在 `.hack` 中加入源码文本和逐条 Hack+ 展开，再把同一份逐 ROM 映射带入生成的 `.driver.sail`，同时说明 driver 阶段与断言来源；如果只需要干净产物，可以选择 `none`。
+默认的 `summary` 保持 ROM 地址和源码行紧凑，并把每条 Hack+ 展开标为 `[i/n] 源伪指令 => 正式指令`。显式选择 `full` 后，还会增加完整源码文本，以及更多 driver 阶段和断言解释；如果只需要干净产物，可以选择 `none`。
 
 输出位于 `isa/hack/.build/multiply.hack`。每条指令仍是标准的 16 位 Hack 机器字，只额外保留 ROM 地址、源码行和伪指令展开信息：
 
 ```text
-0000000000000110 // ROM[0000] L4: SET R0, 6 => @6
-1110110000010000 // ROM[0001] L4: SET R0, 6 => D=A
+0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
 ```
 
 这一步很适合把教材中的编码表、汇编源码和 Sail 解码规则放在一起对照。
@@ -274,7 +274,7 @@ programs/*.asm
 
 1. 阅读 `encdec`；
 2. 写一小段标准 Hack 汇编；
-3. 执行 `pixi run just hack asm <程序名>`；
+3. 执行 `pixi run just hack assemble <程序名>`；
 4. 对照 `.hack` 中的 16 位机器字和 Project 06 的编码表。
 
 ### 实验二：增加一个 ALU 回归用例

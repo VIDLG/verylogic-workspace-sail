@@ -68,7 +68,7 @@ Modules expose the actions that make sense for their toolchain:
 | --- | --- |
 | `list` | List runnable examples |
 | `check` | Type-check the Sail model |
-| `asm` | Produce machine code or another ISA-specific artifact |
+| `assemble` | Produce machine code or another ISA-specific artifact |
 | `run` | Execute one example |
 | `test` | Run the module regression suite |
 | `clean` | Remove generated artifacts |

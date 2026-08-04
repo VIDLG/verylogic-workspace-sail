@@ -142,17 +142,17 @@ The generated program then exits with status `1`, failing `run` or `test`. The d
 Assemble without running:
 
 ```sh
-pixi run just hack asm multiply summary
+pixi run just hack assemble multiply
 pixi run just hack run multiply full
 ```
 
-`summary` keeps ROM addresses and source line numbers compact. The default `full` level adds source text and each Hack+ expansion to `.hack`, then carries the same per-ROM mapping into the generated `.driver.sail`; it also explains driver stages and assertion sources. Use `none` when a bare artifact is more useful than teaching annotations.
+The default `summary` level keeps ROM addresses and source lines compact while marking every Hack+ expansion as `[i/n] source => canonical`. Explicit `full` adds complete source text and more driver-stage and assertion explanations. Use `none` when a bare artifact is more useful than teaching annotations.
 
 The generated `isa/hack/.build/multiply.hack` contains standard 16-bit machine words plus source annotations:
 
 ```text
-0000000000000110 // ROM[0000] L4: SET R0, 6 => @6
-1110110000010000 // ROM[0001] L4: SET R0, 6 => D=A
+0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
 ```
 
 This is a useful bridge between the Project 06 encoding tables, assembly source, and Sail's decoder.
@@ -260,7 +260,7 @@ For the complete assertion, hook, pseudoinstruction, and annotated-file syntax, 
 
 1. Read `encdec` in `hack.sail`.
 2. Write or modify a small standard Hack assembly program.
-3. Run `pixi run just hack asm <name>`.
+3. Run `pixi run just hack assemble <name>`.
 4. Compare each generated word with the Project 06 tables.
 
 ### Add a Sail-level ALU check

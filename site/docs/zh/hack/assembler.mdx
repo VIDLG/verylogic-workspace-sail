@@ -69,8 +69,8 @@ class SourceLine:
 它同时保存行号和原始文本。后续即使一条伪指令展开成四条机器指令，四个结果仍指回同一 `SourceLine`。因此生成文件可以显示：
 
 ```text
-ROM[0000] L1: SET R0, 6 => @6
-ROM[0001] L1: SET R0, 6 => D=A
+ROM[0000] L1 [1/4] SET R0, 6 => @6
+ROM[0001] L1 [2/4] SET R0, 6 => D=A
 ```
 
 这是一个很实用的编译器设计原则：**源码位置应当属于中间表示，而不是等到报错或打印时再猜**。
@@ -151,7 +151,7 @@ D=M
 D;JEQ
 ```
 
-每条展开指令的 `expanded` 字段记录自己的标准写法，但 `source` 仍指向原始 `JEQ` 行。
+每条展开指令都携带 `PseudoExpansion(instruction, index, count)`，而 `source` 仍指向原始 `JEQ` 行。因此四个结果既保留正式指令写法，也保留 `[1/4]` 到 `[4/4]` 的展开位置。
 
 ### 为什么必须先展开再计算标签
 
@@ -236,10 +236,10 @@ word       = 1111110111010001
 每个结果封装为：
 
 ```python
-MachineWord(value, source, expanded)
+MachineWord(value, source, expansion)
 ```
 
-所以机器码、原始源码和伪指令展开关系始终绑在一起。
+普通 A/C 指令的 `expansion` 为 `None`；Hack+ 产物则保存含正式指令和 `[i/n]` 位置的 `PseudoExpansion`。因此机器码、原始源码和伪指令展开关系始终绑在一起。
 
 ## metadata 是旁路，不是指令
 
@@ -286,8 +286,8 @@ hook_path: str
 ### 带源码映射的机器字
 
 ```text
-0000000000000110 // ROM[0000] L1: SET R0, 6 => @6
-1110110000010000 // ROM[0001] L1: SET R0, 6 => D=A
+0000000000000110 // ROM[0000] L1 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L1 [2/4] SET R0, 6 => D=A
 ```
 
 行首仍是普通 Hack 16 位二进制。不了解 metadata 的简单工具可以忽略注释；项目 executor 则能恢复完整运行契约。
@@ -299,10 +299,10 @@ hook_path: str
 | 级别 | 机器字注释 |
 | --- | --- |
 | `none` | 不添加行尾解释 |
-| `summary` | ROM 地址和源码行号，例如 `ROM[0000] L4` |
-| `full` | ROM 地址、源码文本和 Hack+ 展开 |
+| `summary` | ROM 地址和源码行；Hack+ 机器字还显示 `[i/n] 源伪指令 => 正式指令` |
+| `full` | summary 信息加完整原始源码文本 |
 
-默认使用 `full`。`//%hack` 是机器可读的执行 metadata，因此所有级别都会保留。可以运行 `pixi run just hack asm multiply summary`，再与默认完整产物对照。
+默认使用 `summary`：伪指令展开仍然可见，普通 A/C 指令则保持紧凑。`//%hack` 是机器可读的执行 metadata，因此所有级别都会保留。先运行 `pixi run just hack assemble multiply`；需要完整源码文本和 driver 解释时再显式选择 `full`。
 
 ## 为什么还要 `load_hack()`
 
@@ -415,7 +415,7 @@ GOTO LOOP
 ### 练习三：观察 round trip
 
 ```sh
-pixi run just hack asm multiply
+pixi run just hack assemble multiply
 ```
 
 打开 `isa/hack/.build/multiply.hack`，然后对照：

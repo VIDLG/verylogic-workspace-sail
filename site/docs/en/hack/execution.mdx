@@ -10,7 +10,7 @@ This guide follows [`executor.py`](https://github.com/VIDLG/verylogic-workspace-
 | --- | --- | --- |
 | `hack.sail` | A/C instructions, ALU, registers, RAM, and PC transitions | ROM contents, a program-specific `main()`, test program discovery |
 | `executor.py` | Program driver generation, Sail/C compilation, execution, assertions | Program discovery and batch-test policy |
-| `workflow.py` | Source discovery and `check/asm/run/test/clean` orchestration | ISA semantics and judging machine state itself |
+| `workflow.py` | Source discovery and `check/assemble/run/test/clean` orchestration | ISA semantics and judging machine state itself |
 
 This split keeps `hack.sail` reusable as an ISA model. Running another Hack program requires another generated driver, not a change to CPU semantics.
 
@@ -112,8 +112,8 @@ There is no parser AST, symbol table, or hidden Python assembly state. Driver be
 ```ocaml
 function instruction_at(pc : program_counter) -> instruction = {
   match pc {
-    0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4: SET R0, 6 => @6
-    0b000000000000001 => encdec(0b1110110000010000), // ROM[0001] L4: SET R0, 6 => D=A
+    0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4 [1/4] SET R0, 6 => @6
+    0b000000000000001 => encdec(0b1110110000010000), // ROM[0001] L4 [2/4] SET R0, 6 => D=A
     // ...
     _ => AInstruction(0b000000000000000)
   }
@@ -122,7 +122,7 @@ function instruction_at(pc : program_counter) -> instruction = {
 
 This maps each ROM address directly as a 15-bit pattern and sends each 16-bit word through `hack.sail`'s `encdec` mapping. Python does not interpret A/C instructions; it only generates a ROM mapping. Sail still performs decoding and execution.
 
-The same `none / summary / full` level used for `.hack` controls driver comments. At `summary`, each ROM arm carries its address and source line; at `full`, it also carries original assembly and Hack+ expansion. Full drivers additionally explain execution stages, assertion source lines, hooks, and final output. These comments come from `LoadedHack.word_comments`, proving they survived the file boundary.
+The same `none / summary / full` level used for `.hack` controls driver comments. At the default `summary`, each ROM arm carries its address and source line, and Hack+ words also carry `[i/n] source => canonical`. `full` adds complete original source text and expands the explanations for assertion sources, hooks, and final output. These comments come from `LoadedHack.word_comments`, proving they survived the file boundary.
 
 The default arm makes the function total. Normal execution checks `execution_complete()` before fetching beyond loaded ROM.
 
@@ -441,7 +441,7 @@ First runs global tool tests such as `tests/test_install_sail.py`, then invokes 
 Follow artifact boundaries from front to back:
 
 1. **Source error**: inspect assembler `line N` diagnostics.
-2. **Encoding error**: run `just hack asm NAME` and inspect `.hack` source mappings.
+2. **Encoding error**: run `just hack assemble NAME` and inspect `.hack` source mappings.
 3. **Metadata error**: inspect `//%hack` records at the top of `.hack`.
 4. **Driver error**: open `.driver.sail` and inspect ROM, loop, and assertions.
 5. **Sail type error**: read Sail `-c` output directly.

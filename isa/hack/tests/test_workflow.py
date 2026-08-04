@@ -59,7 +59,7 @@ def test_artifact_comment_level_is_forwarded_to_tools(
     monkeypatch.setattr(workflow, "PACKAGE_ROOT", tmp_path)
     monkeypatch.setattr(workflow, "command", lambda args, **_kwargs: commands.append(args))
 
-    workflow.assemble(entry, comments="summary")
+    workflow.assemble(entry)
     workflow.run(entry, comments="none")
 
     assert commands[0][-2:] == ["--comments", "summary"]

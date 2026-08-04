@@ -83,10 +83,17 @@ class SourceLine:
 
 
 @dataclass(frozen=True)
+class PseudoExpansion:
+    instruction: str
+    index: int
+    count: int
+
+
+@dataclass(frozen=True)
 class AInstruction:
     source: SourceLine
     operand: str
-    expanded: str | None = None
+    expansion: PseudoExpansion | None = None
 
 
 @dataclass(frozen=True)
@@ -95,7 +102,7 @@ class CInstruction:
     dest: str
     comp: str
     jump: str
-    expanded: str | None = None
+    expansion: PseudoExpansion | None = None
 
 
 @dataclass(frozen=True)
@@ -163,7 +170,7 @@ class AssemblyMetadata:
 class MachineWord:
     value: int
     source: SourceLine
-    expanded: str | None = None
+    expansion: PseudoExpansion | None = None
 
 
 @dataclass(frozen=True)
@@ -285,12 +292,14 @@ class Parser:
             validate_a_operand(argument, source.line)
         return PseudoInstruction(source, name, arguments)
 
-    def _parse_instruction(self, code: str, source: SourceLine, expanded: str | None = None) -> Instruction:
+    def _parse_instruction(
+        self, code: str, source: SourceLine, expansion: PseudoExpansion | None = None
+    ) -> Instruction:
         a_match = A_INSTRUCTION_RE.fullmatch(code)
         if a_match is not None:
             operand = a_match.group("operand")
             validate_a_operand(operand, source.line)
-            return AInstruction(source, operand, expanded)
+            return AInstruction(source, operand, expansion)
         if code.startswith("@"):
             raise AssemblyError(source.line, "malformed A-instruction")
 
@@ -306,7 +315,7 @@ class Parser:
             raise AssemblyError(source.line, f"invalid computation {comp!r}")
         if jump not in JUMP:
             raise AssemblyError(source.line, f"invalid jump {jump!r}")
-        return CInstruction(source, dest, comp, jump, expanded)
+        return CInstruction(source, dest, comp, jump, expansion)
 
 
 def normalize_hook_path(value: str) -> str:
@@ -399,8 +408,10 @@ def source_description(text: str) -> str | None:
     return None
 
 
-def _expanded_instruction(parser: Parser, source: SourceLine, text: str) -> Instruction:
-    return parser._parse_instruction(text, source, expanded=text)
+def _expanded_instruction(
+    parser: Parser, source: SourceLine, text: str, index: int, count: int
+) -> Instruction:
+    return parser._parse_instruction(text, source, PseudoExpansion(text, index, count))
 
 
 def expand(statements: list[Statement]) -> tuple[list[Instruction | Label], list[AssertionDirective], MaxStepsDirective | None, HookDirective | None, list[tuple[SourceLine, str]]]:
@@ -443,7 +454,11 @@ def expand(statements: list[Statement]) -> tuple[list[Instruction | Label], list
                 code.append(Label(statement.source, label))
                 halts.append((statement.source, label))
                 expanded = [f"@{label}", "0;JMP"]
-            code.extend(_expanded_instruction(parser, statement.source, text) for text in expanded)
+            count = len(expanded)
+            code.extend(
+                _expanded_instruction(parser, statement.source, text, index, count)
+                for index, text in enumerate(expanded, start=1)
+            )
     return code, assertions, max_steps, hook, halts
 
 
@@ -483,7 +498,7 @@ def assemble_text(text: str) -> AssemblyResult:
             word = value
         else:
             word = int(f"111{COMP[instruction.comp]}{DEST[instruction.dest]}{JUMP[instruction.jump]}", 2)
-        records.append(MachineWord(word, instruction.source, instruction.expanded))
+        records.append(MachineWord(word, instruction.source, instruction.expansion))
 
     halt_addresses = tuple(symbols[label] for _, label in halt_labels)
     assertions = tuple(
@@ -515,7 +530,7 @@ def validate_comment_level(value: str) -> str:
     return value
 
 
-def write_hack(assembly: AssemblyResult, path: Path, comments: str = "full") -> None:
+def write_hack(assembly: AssemblyResult, path: Path, comments: str = "summary") -> None:
     comments = validate_comment_level(comments)
     hook_path = normalize_hook_path(assembly.metadata.hook_path)
     lines = [
@@ -541,11 +556,17 @@ def write_hack(assembly: AssemblyResult, path: Path, comments: str = "full") -> 
     for address, record in enumerate(assembly.records):
         suffix = ""
         if comments == "summary":
-            suffix = f" // ROM[{address:04d}] L{record.source.line}"
+            mapping = f"ROM[{address:04d}] L{record.source.line}"
+            if record.expansion is not None:
+                source = record.source.text.split("//", maxsplit=1)[0].strip()
+                expansion = record.expansion
+                mapping += f" [{expansion.index}/{expansion.count}] {source} => {expansion.instruction}"
+            suffix = f" // {mapping}"
         elif comments == "full":
             mapping = f"ROM[{address:04d}] L{record.source.line}: {record.source.text.strip()}"
-            if record.expanded is not None:
-                mapping += f" => {record.expanded}"
+            if record.expansion is not None:
+                expansion = record.expansion
+                mapping += f" [{expansion.index}/{expansion.count}] => {expansion.instruction}"
             suffix = f" // {mapping}"
         lines.append(f"{record.value:016b}{suffix}\n")
     path.write_text("".join(lines), encoding="utf-8")
@@ -700,8 +721,8 @@ def main() -> int:
     _ = parser.add_argument(
         "--comments",
         choices=COMMENT_LEVELS,
-        default="full",
-        help="explanatory artifact comments: none, summary, or full (default)",
+        default="summary",
+        help="explanatory artifact comments: none, summary (default), or full",
     )
     args = parser.parse_args()
 

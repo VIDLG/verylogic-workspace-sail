@@ -40,6 +40,10 @@ def test_driver_comment_levels_control_teaching_annotations(tmp_path: Path) -> N
     assert "Source line 3: .assert A == 0x0000" in contents["full"]
     assert "Sail assertions and exit status determine success" in contents["full"]
 
+    default_driver = tmp_path / "default.driver.sail"
+    write_driver(program, None, default_driver, tmp_path / "program.hack")
+    assert default_driver.read_text(encoding="utf-8") == contents["summary"]
+
     with pytest.raises(ValueError, match="comment level"):
         write_driver(program, None, tmp_path / "invalid.driver.sail", tmp_path / "program.hack", "verbose")
 

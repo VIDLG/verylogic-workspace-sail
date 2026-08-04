@@ -68,7 +68,7 @@ pixi run just <isa> <action> [program]
 | --- | --- |
 | `list` | 列出可运行示例 |
 | `check` | 类型检查 Sail 模型 |
-| `asm` | 生成机器码或 ISA 专属中间产物 |
+| `assemble` | 生成机器码或 ISA 专属中间产物 |
 | `run` | 执行一个示例 |
 | `test` | 运行模块回归测试 |
 | `clean` | 删除生成产物 |

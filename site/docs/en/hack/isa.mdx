@@ -348,7 +348,7 @@ Keep the complete Hack platform separate from this executable model when interpr
 1. Read the A/C encodings and execution pseudocode in this document.
 2. Open [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail) and follow `encdec → alu → should_jump → execute`.
 3. Compare standard assembly and Hack+ in [`programs/basic_alu.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/basic_alu.asm).
-4. Run `pixi run just hack asm basic_alu` and inspect `isa/hack/.build/basic_alu.hack`.
+4. Run `pixi run just hack assemble basic_alu` and inspect `isa/hack/.build/basic_alu.hack`.
 5. Read [`tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail) to see ISA rules turned directly into tests.
 
 ## Specification sources
@@ -360,4 +360,4 @@ Keep the complete Hack platform separate from this executable model when interpr
 
 ---
 
-Next: [follow parsing, Hack+ lowering, and two-pass assembly](/hack/assembler).
+Next: [choose an extension and evolve Hack yourself](/hack/evolution).

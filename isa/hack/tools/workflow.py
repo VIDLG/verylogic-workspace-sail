@@ -76,7 +76,7 @@ def check(sail: Path) -> None:
     command([str(sail), "--just-check", str(ISA_SOURCE)])
 
 
-def assemble(entry: Program, *, comments: str = "full") -> None:
+def assemble(entry: Program, *, comments: str = "summary") -> None:
     output = output_prefix(entry)
     _ = output.parent.mkdir(parents=True, exist_ok=True)
     command(
@@ -96,7 +96,7 @@ def run(
     entry: Program,
     *,
     require_assertions: bool = False,
-    comments: str = "full",
+    comments: str = "summary",
 ) -> None:
     output = output_prefix(entry)
     _ = output.parent.mkdir(parents=True, exist_ok=True)
@@ -140,13 +140,13 @@ def clean() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the Hack ISA workflow")
-    _ = parser.add_argument("action", choices=("list", "check", "asm", "run", "test", "clean"))
+    _ = parser.add_argument("action", choices=("list", "check", "assemble", "run", "test", "clean"))
     _ = parser.add_argument("program", nargs="?")
     _ = parser.add_argument(
         "--comments",
         choices=COMMENT_LEVELS,
-        default="full",
-        help="explanatory artifact comments for asm/run (default: full)",
+        default="summary",
+        help="explanatory artifact comments for assemble/run (default: summary)",
     )
     args = parser.parse_args()
     action = cast(str, args.action)
@@ -156,17 +156,17 @@ def main() -> int:
     try:
         entries = discover_programs()
         sail = install_sail.ensure_installed() if action == "check" else None
-        if action in {"asm", "run"}:
+        if action in {"assemble", "run"}:
             if name is None:
                 raise ValueError(f"{action} requires a program name")
             entry = selected_program(entries, name)
-            if action == "asm":
+            if action == "assemble":
                 assemble(entry, comments=comments)
             else:
                 run(entry, comments=comments)
         elif name is not None:
             raise ValueError(f"{action} does not accept a program name")
-        elif comments != "full":
+        elif comments != "summary":
             raise ValueError(f"{action} does not accept --comments")
         elif action == "check":
             if sail is None:

@@ -16,6 +16,7 @@ The primary reading view—the place readers are expected to spend most of their
   - Hack overview `/hack/` and `/zh/hack/`
     - Tutorial `/hack/tutorial` and `/zh/hack/tutorial`
     - Instruction set `/hack/isa` and `/zh/hack/isa`
+    - Evolve Hack `/hack/evolution` and `/zh/hack/evolution`
     - Toolchain internals
       - Assembler `/hack/assembler` and `/zh/hack/assembler`
       - Execution and tests `/hack/execution` and `/zh/hack/execution`
@@ -26,7 +27,7 @@ The primary reading view—the place readers are expected to spend most of their
 ## Navigation Model
 
 - **Primary navigation**: the site title/home link and locale switcher in the Rspress header. The workspace home selects an ISA rather than duplicating each ISA's task menu.
-- **Secondary navigation**: a locale-specific sidebar grouped as Workspace, Hack, and Toolchain internals. Within Hack, the order is overview, tutorial, then ISA; the advanced group contains assembler, then execution.
+- **Secondary navigation**: a locale-specific sidebar grouped as Workspace, Hack, and Toolchain internals. Within Hack, the order is overview, tutorial, ISA, then Evolve Hack; the advanced group contains assembler, then execution.
 - **Utility navigation**: repository and package-reference links appear contextually in page introductions.
 - **Small screens**: use the Rspress theme's collapsible sidebar and locale selector without a second custom navigation system.
 - **Maximum depth**: three levels: locale, ISA, article.
@@ -59,6 +60,13 @@ The primary reading view—the place readers are expected to spend most of their
 2. Explain instruction encodings and state transitions.
 3. Separate standard Hack from assembler conveniences.
 4. Map the contract to Sail.
+
+### Evolve Hack
+
+1. Show real `[i/n]` Hack+ expansion artifacts.
+2. Separate tooling, platform, ISA, and implementation changes.
+3. Offer a graduated project ladder and creative prompts.
+4. Require a small experiment contract, compatibility decision, and tests.
 
 ### Assembler internals
 
@@ -99,10 +107,17 @@ The primary reading view—the place readers are expected to spend most of their
 
 ### Inspect generated teaching artifacts
 
-1. Learner runs `pixi run just hack asm multiply summary` to correlate source lines with ROM addresses.
+1. Learner runs `pixi run just hack assemble multiply` to correlate source lines and Hack+ expansion positions with ROM addresses.
 2. Learner runs `pixi run just hack run multiply full` to generate and execute the complete teaching artifact set.
 3. Learner compares matching per-ROM comments in `.hack` and `.driver.sail`.
 4. Learner follows the Toolchain internals section when ready to understand how those comments cross the file boundary.
+
+### Evolve the machine
+
+1. Learner completes the tutorial and ISA guide.
+2. Learner opens Evolve Hack and classifies an idea as tooling, platform, ISA, or implementation work.
+3. Learner writes an experiment contract and identifies the required model/tool/test changes.
+4. Learner implements one small extension while keeping standard regressions passing unless incompatibility is explicit.
 
 ### Debug or extend the toolchain
 
@@ -127,6 +142,7 @@ The primary reading view—the place readers are expected to spend most of their
 | Introductory sequence | Tutorial | Hands-on, ordered learning |
 | Exact local syntax | Package reference | Lives beside code in `isa/<isa>/README*` |
 | Python coordinator | workflow | Preserve the implementation's term |
+| Creative extension article | Evolve Hack | Encourages modification while requiring precise layer boundaries |
 | Advanced implementation section | Toolchain internals | Groups assembler and execution without mixing them into the beginner path |
 | Machine-code runner | executor | Preserve the implementation's term |
 | Extended assembly syntax | Hack+ pseudoinstruction | Never call it part of the Hack ISA |
@@ -137,9 +153,9 @@ The primary reading view—the place readers are expected to spend most of their
 | --- | --- | --- |
 | Rspress locale shell | All site pages | English and Chinese labels and routes |
 | ISA sidebar group | Every ISA section | Page labels are localized; order is shared |
-| Article opening | Tutorial, ISA, assembler, execution | States the question answered and links to neighboring context |
+| Article opening | Tutorial, ISA, evolution, assembler, execution | States the question answered and links to neighboring context |
 | Package-reference link | ISA articles | Points to exact commands and directives beside source |
-| Previous/next path | Ordered Hack articles | Moves through tutorial → ISA → assembler → execution |
+| Previous/next path | Ordered Hack articles | Moves through tutorial → ISA → evolution → assembler → execution |
 
 ## Content Growth Plan
 
@@ -156,6 +172,6 @@ The primary reading view—the place readers are expected to spend most of their
 - Rspress omits the default `en` locale from published URLs; `zh` remains explicit.
 - ISA segments use lowercase stable module names such as `hack`.
 - Overview routes come from `index.mdx`, for example `/hack/` and `/zh/hack/`.
-- Article slugs: lowercase durable concepts (`tutorial`, `isa`, `assembler`, `execution`).
+- Article slugs: lowercase durable concepts (`tutorial`, `isa`, `evolution`, `assembler`, `execution`).
 - Avoid file-format or implementation-version terms in URLs.
 - Do not use query parameters for primary navigation.

@@ -25,6 +25,7 @@ A successful program ends with `ASSERT PASS` and a dump of architectural state. 
 | --- | --- |
 | where Hack and Sail come from, and how to run a first program | [Tutorial](/hack/tutorial) |
 | registers, memory, instruction bits, ALU operations, and jumps | [ISA guide](/hack/isa) |
+| how to add pseudoinstructions, tools, devices, or real ISA extensions | [Evolve Hack](/hack/evolution) |
 | symbols, Hack+ lowering, two-pass assembly, and `.hack` output | [Assembler internals](/hack/assembler) |
 | generated drivers, Sail's C backend, assertions, hooks, and tests | [Execution and tests](/hack/execution) |
 | exact commands, directives, and artifact comment levels | [Package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md) |
@@ -49,5 +50,6 @@ The machine contract belongs to `hack.sail`; source translation belongs to the a
 
 1. Complete the [tutorial](/hack/tutorial) and inspect `multiply.asm`.
 2. Read the [ISA guide](/hack/isa) while following `hack.sail`.
-3. Enter **Toolchain internals** and follow the same source through the [assembler](/hack/assembler).
-4. Finish with the [execution and test workflow](/hack/execution).
+3. Use [Evolve Hack](/hack/evolution) to choose and specify a modification at the correct layer.
+4. Enter **Toolchain internals** and follow the same source through the [assembler](/hack/assembler).
+5. Finish with the [execution and test workflow](/hack/execution).

@@ -25,6 +25,7 @@ pixi run just hack run multiply
 | --- | --- |
 | Hack、nand2tetris、NandGame 和 Sail 的关系，以及第一次运行 | [入门教程](/zh/hack/tutorial) |
 | 寄存器、内存、指令位、ALU 运算和跳转 | [ISA 指南](/zh/hack/isa) |
+| 怎样增加伪指令、工具、设备或真正的 ISA 扩展 | [进化 Hack](/zh/hack/evolution) |
 | 符号、Hack+ 降级、两遍汇编和 `.hack` 输出 | [汇编器内部原理](/zh/hack/assembler) |
 | 生成 driver、Sail C 后端、断言、Hook 和测试 | [执行器与测试](/zh/hack/execution) |
 | 精确命令、源码指令和产物注释级别 | [Hack 包参考](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md) |
@@ -49,5 +50,6 @@ flowchart TD
 
 1. 完成[入门教程](/zh/hack/tutorial)，并查看 `multiply.asm`。
 2. 对照 `hack.sail` 阅读 [ISA 指南](/zh/hack/isa)。
-3. 进入**工具链内部原理**，沿同一份源码继续阅读[汇编器](/zh/hack/assembler)。
-4. 最后阅读[执行器与测试工作流](/zh/hack/execution)。
+3. 通过[进化 Hack](/zh/hack/evolution)选择一个扩展，并先判断它属于哪一层。
+4. 进入**工具链内部原理**，沿同一份源码继续阅读[汇编器](/zh/hack/assembler)。
+5. 最后阅读[执行器与测试工作流](/zh/hack/execution)。

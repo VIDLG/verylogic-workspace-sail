@@ -8,13 +8,17 @@ list:
 check:
     python tools/workflow.py check
 
-# Assemble a program; comments: none, summary, or full.
-asm program comments="full":
-    python tools/workflow.py asm {{ program }} --comments {{ comments }}
+# Assemble a program; comments: none, summary (default), or full.
+assemble program comments="summary":
+    python tools/workflow.py assemble {{ program }} --comments {{ comments }}
 
-# Execute a program; comments: none, summary, or full.
-run program comments="full":
+alias a := assemble
+
+# Execute a program; comments: none, summary (default), or full.
+run program comments="summary":
     python tools/workflow.py run {{ program }} --comments {{ comments }}
+
+alias r := run
 
 # Run unit tests and every bundled program's Sail assertions.
 test:

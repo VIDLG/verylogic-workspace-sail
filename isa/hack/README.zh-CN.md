@@ -9,13 +9,14 @@
 在仓库根目录执行：
 
 ```sh
-pixi run just hack list               # 列出 programs/*.asm
-pixi run just hack check              # 类型检查 hack.sail
-pixi run just hack asm multiply       # 生成带完整注释的 .build/multiply.hack
-pixi run just hack asm multiply summary
-pixi run just hack run multiply none  # 不生成解释性注释
-pixi run just hack test               # 单元测试 + 所有程序端到端测试
-pixi run just hack clean              # 删除生成产物
+pixi run just hack list                  # 列出 programs/*.asm
+pixi run just hack check                 # 类型检查 hack.sail
+pixi run just hack assemble multiply     # 生成 summary 注释的 .build/multiply.hack
+pixi run just hack a multiply full       # 短别名；显式请求完整注释
+pixi run just hack run multiply none     # 不生成解释性注释
+pixi run just hack r multiply            # run 的短别名
+pixi run just hack test                  # 单元测试 + 所有程序端到端测试
+pixi run just hack clean                 # 删除生成产物
 ```
 
 ## 模块地图
@@ -33,22 +34,36 @@ pixi run just hack clean              # 删除生成产物
 
 ## 生成产物的注释级别
 
-`asm` 和 `run` 接受一个可选注释级别。默认使用 `full`，因为生成产物本身也是教学界面：
+`assemble` 和 `run` 接受一个可选注释级别。默认使用 `summary`，保留最有用的源码到机器字映射，同时避免产物过密：
 
 | 级别 | `.hack` 机器字 | 生成的 `.driver.sail` |
 | --- | --- | --- |
 | `none` | 不添加解释性机器字注释 | 不添加解释性注释 |
-| `summary` | ROM 地址和原始源码行号 | 阶段说明和简要逐 ROM 映射 |
-| `full` | ROM 地址、源码文本和 Hack+ 展开 | 阶段说明、完整逐 ROM 映射、断言来源和输出语义 |
+| `summary` | ROM 地址和源码行；Hack+ 机器字还显示 `[i/n] 源伪指令 => 正式指令` | 阶段说明和简要逐 ROM 映射 |
+| `full` | summary 信息加完整源码文本 | 阶段说明、完整逐 ROM 映射、断言来源和输出语义 |
 
 示例：
 
 ```sh
-pixi run just hack asm multiply summary
+pixi run just hack assemble multiply        # 默认 summary
+pixi run just hack assemble multiply full
 pixi run just hack run multiply full
 ```
 
 机器可读的 `//%hack` metadata 始终保留，`none` 也不例外；executor 依赖其中的断言、HALT 地址、Hook 和步数限制。Driver 注释来自重新加载的 `.hack`，而不是汇编器中未写入文件的隐藏状态。
+
+### Hack+ 展开现场
+
+对于 `SET R0, 6`，默认 `summary` 会把四条真正执行的正式指令展示出来：
+
+```text
+0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+0000000000000000 // ROM[0002] L4 [3/4] SET R0, 6 => @R0
+1110001100001000 // ROM[0003] L4 [4/4] SET R0, 6 => M=D
+```
+
+`[i/n]` 表示一条源伪指令生成的 `n` 个结果中的第 `i` 个。它只是解释文字，不属于机器码；普通 A/C 指令没有展开标记。`full` 还会保留完整源码行，包括行内注释。同一份逐 ROM 文字只有在严格重新加载 `.hack` 后才进入 `.driver.sail`。
 
 ## 程序源码格式
 
@@ -155,7 +170,7 @@ Assertion failed: assertion D == 0x0002 from source line 6 failed
 | `JNZ/JGT/JEQ/JGE/JLT/JLE target, label` | 读取 `RAM[target]` 后条件跳转 |
 | `HALT` | 生成私有两指令自循环并记录结束地址 |
 
-Hack+ 在收集标签前全部降级为标准 Hack A/C 指令，不扩展 ISA。完整展开和寄存器副作用见 [Hack+ 降级](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa#hack-如何降级为正式指令)。
+Hack+ 在收集标签前全部降级为标准 Hack A/C 指令，不扩展 ISA。一条伪指令若展开为 `n` 条正式指令，带注释产物会把对应机器字标成 `[1/n]` 到 `[n/n]`；普通 A/C 指令不显示展开标记。完整展开和寄存器副作用见 [Hack+ 降级](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa#hack-如何降级为正式指令)。
 
 ## Sail Hook API
 
@@ -175,4 +190,5 @@ Hook 与 `hack.sail` 和生成 driver 运行在同一个 Sail/C 进程中，可�
 1. [运行并观察第一个程序](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/tutorial)。
 2. [理解 Hack 的机器契约](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa)。
 3. [跟踪解析、降级和两遍汇编](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/assembler)。
-4. [跟踪 driver、本机执行和测试](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/execution)。
+4. [选择工具、平台或 ISA 扩展，进化自己的 Hack](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/evolution)。
+5. [跟踪 driver、本机执行和测试](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/execution)。

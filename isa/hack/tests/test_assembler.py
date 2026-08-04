@@ -25,7 +25,14 @@ def test_pseudoinstruction_expansion_preserves_source_mapping() -> None:
     source = "  SET R0, 16 // original comment\nHALT\n.assert R0 == 16\n"
     result = assemble_text(source)
 
-    assert [record.expanded for record in result.records[:4]] == ["@16", "D=A", "@R0", "M=D"]
+    assert [record.expansion.instruction for record in result.records[:4] if record.expansion] == [
+        "@16", "D=A", "@R0", "M=D"
+    ]
+    assert [
+        (record.expansion.index, record.expansion.count)
+        for record in result.records[:4]
+        if record.expansion
+    ] == [(1, 4), (2, 4), (3, 4), (4, 4)]
     assert all(record.source.line == 1 for record in result.records[:4])
     assert all(record.source.text == "  SET R0, 16 // original comment" for record in result.records[:4])
     assert result.metadata.halt_addresses == (4,)
@@ -44,13 +51,13 @@ def test_annotated_hack_round_trip(tmp_path: Path) -> None:
     )
     result = assemble_text(source)
     output = tmp_path / "program.hack"
-    write_hack(result, output)
+    write_hack(result, output, "full")
 
     contents = output.read_text(encoding="utf-8")
     instruction_lines = [line for line in contents.splitlines() if line and not line.startswith("//")]
     assert len(instruction_lines) == len(result.words)
     assert all(line.split(" //", maxsplit=1)[0] and len(line.split(" //", maxsplit=1)[0]) == 16 for line in instruction_lines)
-    assert "ROM[0000] L2: SET R0, 1 => @1" in contents
+    assert "ROM[0000] L2: SET R0, 1 [1/4] => @1" in contents
     assert '//%hack format {"version":3}' in contents
     assert '//%hack hook {"path":"hooks/trace.sail"}' in contents
     assert '//%hack assert {"line":5,"mode":"signed","operator":"<","target":"R0","value":-2}' in contents
@@ -90,7 +97,7 @@ def test_description_is_source_only_and_does_not_emit_words(tmp_path: Path) -> N
 
 
 def test_hack_artifact_comment_levels_preserve_machine_contract(tmp_path: Path) -> None:
-    assembly = assemble_text("SET R0, 1\nHALT\n.assert R0 == 1\n")
+    assembly = assemble_text("SET R0, 1 // initialize R0\nHALT\n.assert R0 == 1\n")
     contents: dict[str, str] = {}
 
     for level in ("none", "summary", "full"):
@@ -104,9 +111,13 @@ def test_hack_artifact_comment_levels_preserve_machine_contract(tmp_path: Path) 
     none_words = [line for line in contents["none"].splitlines() if line and not line.startswith("//")]
     assert all(len(line) == 16 for line in none_words)
     assert "//%hack assert" in contents["none"]
-    assert "ROM[0000] L1" in contents["summary"]
-    assert "SET R0, 1 => @1" not in contents["summary"]
-    assert "ROM[0000] L1: SET R0, 1 => @1" in contents["full"]
+    assert "ROM[0000] L1 [1/4] SET R0, 1 => @1" in contents["summary"]
+    assert "initialize R0" not in contents["summary"]
+    assert "ROM[0000] L1: SET R0, 1 // initialize R0 [1/4] => @1" in contents["full"]
+
+    default_output = tmp_path / "default.hack"
+    write_hack(assembly, default_output)
+    assert default_output.read_text(encoding="utf-8") == contents["summary"]
 
     with pytest.raises(ValueError, match="comment level"):
         write_hack(assembly, tmp_path / "invalid.hack", "verbose")

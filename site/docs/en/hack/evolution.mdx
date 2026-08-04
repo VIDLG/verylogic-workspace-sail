@@ -1,0 +1,179 @@
+---
+title: Evolve Hack
+---
+
+# Evolve Hack Yourself
+
+[← ISA guide](/hack/isa) · [Assembler internals →](/hack/assembler) · [中文](/zh/hack/evolution)
+
+The model in this workspace is a starting point, not a museum piece. Once the standard Hack programs pass, try changing the language around the machine, the platform connected to it, or the ISA itself. The important habit is to say **which layer you are changing** and then carry that decision through the model, tools, tests, and documentation.
+
+## First see what lowering preserves
+
+Given this Hack+ source:
+
+```asm
+SET R0, 6 // multiplicand
+```
+
+The default `summary` artifact shows every real instruction produced by the pseudoinstruction:
+
+```text
+0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+0000000000000000 // ROM[0002] L4 [3/4] SET R0, 6 => @R0
+1110001100001000 // ROM[0003] L4 [4/4] SET R0, 6 => M=D
+```
+
+`[i/n]` is expansion lineage: this word is result `i` of `n` from one source pseudoinstruction. It is not part of Hack machine code. A normal A or C instruction has no expansion marker.
+
+Requesting `full` preserves the complete original line as well:
+
+```text
+0000000000000110 // ROM[0000] L4: SET R0, 6 // multiplicand [1/4] => @6
+```
+
+The generated driver receives the same mapping only after reloading the `.hack` file:
+
+```ocaml
+0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4 [1/4] SET R0, 6 => @6
+```
+
+Run these commands to inspect both forms:
+
+```sh
+pixi run just hack assemble multiply
+pixi run just hack assemble multiply full
+pixi run just hack run multiply full
+```
+
+## Name the layer before changing it
+
+| Layer | Examples | Does standard Hack machine code change? |
+| --- | --- | --- |
+| Assembly surface and tooling | New Hack+ pseudoinstructions, diagnostics, disassembler, debugger, trace output | No; everything still lowers to standard A/C words |
+| Runtime or platform | Screen and keyboard behavior, timer, serial port, startup convention | Usually no; device behavior or execution environment changes |
+| ISA | New shift instruction, a real `HALT` encoding, new register or addressing mode | Yes; encoding or architectural state changes |
+| Implementation or verification | Pipeline experiment, gate-level implementation, property tests, differential tests | Not necessarily; the same ISA may have another implementation |
+
+This distinction prevents a common mistake: making the parser accept a mnemonic and calling it a new instruction even though neither the encoding nor Sail execution semantics changed.
+
+## A project ladder
+
+### 1. Add one safe pseudoinstruction
+
+Good first candidates include:
+
+```asm
+CLR target
+COPY source, target
+PUSH source
+POP target
+```
+
+Specify the exact standard Hack expansion and register side effects first. Then update the parser, structured expansion lineage, assembler tests, one end-to-end program, and the Hack+ table. `hack.sail` should remain unchanged because the ISA did not change.
+
+For `PUSH`, `POP`, `CALL`, or `RET`, first write down a stack and calling convention. A convenient syntax without a convention is not yet a complete design.
+
+### 2. Improve observation and debugging
+
+Possible projects:
+
+- a hook that traces `PC`, the decoded instruction, and changed state;
+- breakpoints or watchpoints implemented in the driver;
+- a `.hack` disassembler that displays canonical A/C syntax;
+- a step-by-step HTML trace linking source, ROM word, and state transition;
+- assertion diagnostics that show actual and expected values together.
+
+These projects teach executor and tooling design while leaving Hack compatibility intact.
+
+### 3. Complete more of the Hack platform
+
+The current model gives `SCREEN` and `KBD` their standard addresses but does not emulate device side effects. You could add:
+
+- framebuffer rendering for the screen region;
+- keyboard input snapshots;
+- a timer or serial-output memory-mapped device;
+- deterministic scripted device input for tests.
+
+Document these as **platform extensions**, not instruction extensions. Define address ranges, read/write behavior, reset values, and deterministic test inputs.
+
+### 4. Add a real ISA instruction
+
+Interesting candidates include:
+
+- logical or arithmetic shifts;
+- a real `HALT` word instead of the current Hack+ self-loop convention;
+- another condition or ALU operation;
+- a deliberately small extension register.
+
+Before taking an unused-looking C-instruction bit pattern, enumerate canonical encodings and circuit aliases. Then define:
+
+1. exact bit layout and assembly syntax;
+2. decode result and architectural state transition;
+3. invalid or reserved encodings;
+4. assembler encoding and any pseudoinstruction interaction;
+5. known-word, decode, semantic, and end-to-end tests;
+6. whether old standard Hack programs remain binary compatible.
+
+A real instruction must be implemented consistently in `hack.sail`, the assembler, conformance tests, examples, and the ISA reference.
+
+### 5. Try a more radical machine
+
+Once compatibility is no longer a goal, questions become broader:
+
+- What would Hack look like with a wider PC or more addressable memory?
+- Could one encoding support immediate arithmetic without losing simple decoding?
+- Would separate load/store instructions make data movement clearer?
+- How would a flags register change branches?
+- What is the smallest change that makes function calls substantially easier?
+- Can the machine remain easy to build from gates after the extension?
+
+At this point, give the dialect or ISA a new name rather than silently redefining nand2tetris Hack.
+
+## Change map
+
+| Change | Minimum implementation surface |
+| --- | --- |
+| Hack+ pseudoinstruction | `assembler.py` parser/lowering, expansion tests, examples, package reference |
+| Artifact explanation | writer/loader contract, driver comment propagation, comment-level tests, docs |
+| Execution observation | hook or executor/driver, deterministic tests, execution guide |
+| Memory-mapped device | platform state and read/write semantics, driver input/output, Sail and end-to-end tests |
+| New encoded instruction | `hack.sail` decode/execute, assembler encoding, independent known words, conformance and integration tests, ISA guide |
+| New frontend such as VM-to-Hack | separate translator, canonical `.asm` boundary, source provenance, translator and end-to-end tests |
+
+## Use an experiment contract
+
+Before coding, write a small durable specification:
+
+```text
+Goal:
+Layer being changed:
+Source syntax or external interface:
+Encoding, if any:
+State read and written:
+Errors and reserved cases:
+Compatibility promise:
+Independent test vectors:
+End-to-end example:
+Documentation to update:
+```
+
+Keep the standard regression suite passing unless incompatibility is the explicit subject of the experiment. New behavior should have at least one direct semantic test and one runnable program with `.assert` contracts.
+
+## Creative challenge ideas
+
+- Draw a pattern into screen memory and build a minimal viewer.
+- Design `CALL` and `RET` as Hack+ first, then compare them with true ISA support.
+- Add shifts and use them to implement faster multiplication or bit extraction.
+- Build a VM-to-Hack translator that preserves VM source locations in `.hack` comments.
+- Add a deterministic serial device and write a program that emits text.
+- Generate random legal A/C instructions and check encode/decode or execution properties.
+- Compare two independent implementations of one instruction on thousands of states.
+- Design “Hack32” and explain exactly which simplicity of Hack was gained or lost.
+
+The goal is not to maximize features. A small extension with a precise contract, readable artifacts, and convincing tests teaches more than a large extension whose layer and semantics are unclear.
+
+---
+
+Next: [follow how the teaching assembler represents and lowers source](/hack/assembler).

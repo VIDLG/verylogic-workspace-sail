@@ -48,6 +48,7 @@ export default defineConfig({
             { text: 'Overview', link: '/hack/' },
             { text: 'Tutorial', link: '/hack/tutorial' },
             { text: 'ISA guide', link: '/hack/isa' },
+            { text: 'Evolve Hack', link: '/hack/evolution' },
           ],
         },
         {
@@ -69,6 +70,7 @@ export default defineConfig({
             { text: '概览', link: '/zh/hack/' },
             { text: '入门教程', link: '/zh/hack/tutorial' },
             { text: 'ISA 指南', link: '/zh/hack/isa' },
+            { text: '进化 Hack', link: '/zh/hack/evolution' },
           ],
         },
         {

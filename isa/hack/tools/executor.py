@@ -112,7 +112,7 @@ def write_driver(
     max_steps: int | None,
     path: Path,
     binary: Path,
-    comments: str = "full",
+    comments: str = "summary",
 ) -> None:
     comments = validate_comment_level(comments)
     words = program.words
@@ -266,7 +266,7 @@ def run(
     output: Path,
     max_steps: int | None = None,
     require_assertions: bool = False,
-    comments: str = "full",
+    comments: str = "summary",
 ) -> None:
     comments = validate_comment_level(comments)
     if max_steps is not None and max_steps <= 0:
@@ -319,8 +319,8 @@ def main() -> int:
     _ = parser.add_argument(
         "--comments",
         choices=COMMENT_LEVELS,
-        default="full",
-        help="explanatory artifact comments: none, summary, or full (default)",
+        default="summary",
+        help="explanatory artifact comments: none, summary (default), or full",
     )
     args = parser.parse_args()
 

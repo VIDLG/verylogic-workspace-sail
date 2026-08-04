@@ -9,13 +9,14 @@ This module implements the nand2tetris Hack instruction set in Sail and provides
 Run from the repository root:
 
 ```sh
-pixi run just hack list               # List programs/*.asm
-pixi run just hack check              # Type-check hack.sail
-pixi run just hack asm multiply       # Write fully annotated .build/multiply.hack
-pixi run just hack asm multiply summary
-pixi run just hack run multiply none  # Build without explanatory comments
-pixi run just hack test               # Unit tests + every program end to end
-pixi run just hack clean              # Remove generated artifacts
+pixi run just hack list                  # List programs/*.asm
+pixi run just hack check                 # Type-check hack.sail
+pixi run just hack assemble multiply     # Write summary-annotated .build/multiply.hack
+pixi run just hack a multiply full       # Short alias; request full annotations
+pixi run just hack run multiply none     # Build without explanatory comments
+pixi run just hack r multiply            # Short alias for run
+pixi run just hack test                  # Unit tests + every program end to end
+pixi run just hack clean                 # Remove generated artifacts
 ```
 
 ## Module map
@@ -33,22 +34,36 @@ pixi run just hack clean              # Remove generated artifacts
 
 ## Artifact comment levels
 
-`asm` and `run` accept an optional comment level. The default is `full` because generated artifacts are part of the teaching interface:
+`assemble` and `run` accept an optional comment level. The default is `summary`, which keeps the most useful source-to-machine mapping without overwhelming the artifact:
 
 | Level | `.hack` machine words | Generated `.driver.sail` |
 | --- | --- | --- |
 | `none` | No explanatory word comments | No explanatory comments |
-| `summary` | ROM address and original source line | Stage comments and concise per-ROM mappings |
-| `full` | ROM address, source text, and Hack+ expansion | Stage comments, full per-ROM mappings, assertion sources, and output semantics |
+| `summary` | ROM address and source line; Hack+ words also show `[i/n] source => canonical` | Stage comments and concise per-ROM mappings |
+| `full` | Summary information plus complete source text | Stage comments, full per-ROM mappings, assertion sources, and output semantics |
 
 Examples:
 
 ```sh
-pixi run just hack asm multiply summary
+pixi run just hack assemble multiply        # summary by default
+pixi run just hack assemble multiply full
 pixi run just hack run multiply full
 ```
 
 Machine-readable `//%hack` metadata is always written, including at `none`; it carries assertions, HALT addresses, the hook, and the step limit required by the executor. Driver comments are recovered from the reloaded `.hack` artifact rather than from hidden assembler state.
+
+### What Hack+ expansion looks like
+
+For `SET R0, 6`, the default `summary` output makes the four real instructions visible:
+
+```text
+0000000000000110 // ROM[0000] L4 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L4 [2/4] SET R0, 6 => D=A
+0000000000000000 // ROM[0002] L4 [3/4] SET R0, 6 => @R0
+1110001100001000 // ROM[0003] L4 [4/4] SET R0, 6 => M=D
+```
+
+`[i/n]` means result `i` of `n` from one source pseudoinstruction. It is explanatory text, not machine code; ordinary A/C instructions have no expansion marker. `full` additionally preserves the complete source line, including its inline comment. The same per-ROM text appears in `.driver.sail` only after strict `.hack` reload.
 
 ## Program source format
 
@@ -155,7 +170,7 @@ Normal `run` permits a program without assertions and prints `RUN COMPLETE`. `ha
 | `JNZ/JGT/JEQ/JGE/JLT/JLE target, label` | Read `RAM[target]` and branch |
 | `HALT` | Emit a private two-instruction self-loop and record completion |
 
-Hack+ lowers completely to standard Hack A/C instructions before label collection; it does not extend the ISA. Complete expansions and register side effects are documented in [Hack+ lowering](https://vidlg.github.io/verylogic-workspace-sail/hack/isa#how-hack-lowers-to-real-instructions).
+Hack+ lowers completely to standard Hack A/C instructions before label collection; it does not extend the ISA. For a pseudoinstruction that lowers to `n` real instructions, annotated artifacts mark each machine word as `[1/n]` through `[n/n]`; ordinary A/C instructions have no expansion marker. Complete expansions and register side effects are documented in [Hack+ lowering](https://vidlg.github.io/verylogic-workspace-sail/hack/isa#how-hack-lowers-to-real-instructions).
 
 ## Sail hook API
 
@@ -175,4 +190,5 @@ Hooks run in the same Sail/C process as `hack.sail` and the generated driver, so
 1. [Run and inspect a first program](https://vidlg.github.io/verylogic-workspace-sail/hack/tutorial).
 2. [Understand the Hack machine contract](https://vidlg.github.io/verylogic-workspace-sail/hack/isa).
 3. [Follow parsing, lowering, and two-pass assembly](https://vidlg.github.io/verylogic-workspace-sail/hack/assembler).
-4. [Follow driver generation, native execution, and tests](https://vidlg.github.io/verylogic-workspace-sail/hack/execution).
+4. [Choose a tool, platform, or ISA extension and evolve Hack](https://vidlg.github.io/verylogic-workspace-sail/hack/evolution).
+5. [Follow driver generation, native execution, and tests](https://vidlg.github.io/verylogic-workspace-sail/hack/execution).

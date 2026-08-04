@@ -69,8 +69,8 @@ class SourceLine:
 It retains both the line number and original text. If one pseudoinstruction later expands into four machine instructions, all four still point to the same `SourceLine`. The writer can therefore emit:
 
 ```text
-ROM[0000] L1: SET R0, 6 => @6
-ROM[0001] L1: SET R0, 6 => D=A
+ROM[0000] L1 [1/4] SET R0, 6 => @6
+ROM[0001] L1 [2/4] SET R0, 6 => D=A
 ```
 
 This is a useful compiler principle: **source locations belong in the IR; do not try to reconstruct them only when reporting an error**.
@@ -151,7 +151,7 @@ D=M
 D;JEQ
 ```
 
-Each lowered instruction stores its standard form in `expanded`, while `source` still points at the original `JEQ` line.
+Each lowered instruction carries `PseudoExpansion(instruction, index, count)`, while `source` still points at the original `JEQ` line. The four results therefore retain both their canonical spelling and positions `[1/4]` through `[4/4]`.
 
 ### Why lowering must precede label collection
 
@@ -236,10 +236,10 @@ word       = 1111110111010001
 Each result is wrapped as:
 
 ```python
-MachineWord(value, source, expanded)
+MachineWord(value, source, expansion)
 ```
 
-Machine code, original source, and lowering provenance remain connected.
+For ordinary A/C instructions, `expansion` is `None`. For Hack+ output, it is a `PseudoExpansion` containing the canonical instruction and its `[i/n]` position, so machine code, original source, and lowering provenance remain connected.
 
 ## Metadata is a side channel, not code
 
@@ -286,8 +286,8 @@ Metadata precedes words and uses a versioned, fixed-key JSON schema.
 ### Source-mapped machine words
 
 ```text
-0000000000000110 // ROM[0000] L1: SET R0, 6 => @6
-1110110000010000 // ROM[0001] L1: SET R0, 6 => D=A
+0000000000000110 // ROM[0000] L1 [1/4] SET R0, 6 => @6
+1110110000010000 // ROM[0001] L1 [2/4] SET R0, 6 => D=A
 ```
 
 The line still begins with a normal 16-bit Hack word. Simple tools can ignore comments, while this project's executor can reconstruct the full execution contract.
@@ -299,10 +299,10 @@ The optional `comments` argument controls explanatory word comments without chan
 | Level | Word annotation |
 | --- | --- |
 | `none` | No trailing explanation |
-| `summary` | ROM address and source line, such as `ROM[0000] L4` |
-| `full` | ROM address, source text, and Hack+ expansion |
+| `summary` | ROM address and source line; Hack+ words also show `[i/n] source => canonical` |
+| `full` | Summary information plus the complete original source text |
 
-`full` is the default. `//%hack` records are machine-readable execution metadata, so they are written at every level. Try `pixi run just hack asm multiply summary` and compare the result with the default full artifact.
+`summary` is the default. It keeps pseudoinstruction lowering visible while leaving ordinary A/C instructions compact. `//%hack` records are machine-readable execution metadata, so they are written at every level. Run `pixi run just hack assemble multiply`, then request `full` explicitly when you need the complete source text and driver explanations.
 
 ## Why `load_hack()` exists
 
@@ -415,7 +415,7 @@ Only then modify `PSEUDO_NAMES`, parsing patterns, and `expand()`.
 ### Exercise 3: inspect a round trip
 
 ```sh
-pixi run just hack asm multiply
+pixi run just hack assemble multiply
 ```
 
 Open `isa/hack/.build/multiply.hack` and correlate:

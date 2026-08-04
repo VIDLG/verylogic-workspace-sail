@@ -348,7 +348,7 @@ D;JEQ
 1. 先看本文的 A/C 编码和执行伪代码；
 2. 打开 [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail)，依次阅读 `encdec → alu → should_jump → execute`；
 3. 查看 [`programs/basic_alu.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/basic_alu.asm)，对照标准汇编与 Hack+；
-4. 执行 `pixi run just hack asm basic_alu`，查看 `isa/hack/.build/basic_alu.hack`；
+4. 执行 `pixi run just hack assemble basic_alu`，查看 `isa/hack/.build/basic_alu.hack`；
 5. 阅读 [`tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail)，观察 ISA 规则如何直接变成测试。
 
 ## 规范来源
@@ -360,4 +360,4 @@ D;JEQ
 
 ---
 
-下一步：[跟踪解析、Hack+ 降级与两遍汇编](/zh/hack/assembler)。
+下一步：[选择一个扩展，进化你自己的 Hack](/zh/hack/evolution)。

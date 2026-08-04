@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `hack.sail` | A/C 指令、ALU、寄存器、RAM、PC 状态转换 | ROM 内容、特定程序的 `main()`、测试程序发现 |
 | `executor.py` | 生成程序专属 driver、调用 Sail/C 编译、运行并检查断言 | 程序发现和批量测试策略 |
-| `workflow.py` | 发现源码、选择程序、组织 `check/asm/run/test/clean` | ISA 语义和机器状态判断 |
+| `workflow.py` | 发现源码、选择程序、组织 `check/assemble/run/test/clean` | ISA 语义和机器状态判断 |
 
 这种拆分让 `hack.sail` 保持为可复用的 ISA 模型。换一个 Hack 程序只需要生成新的 driver，不需要改 CPU 语义。
 
@@ -112,8 +112,8 @@ class LoadedHack:
 ```ocaml
 function instruction_at(pc : program_counter) -> instruction = {
   match pc {
-    0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4: SET R0, 6 => @6
-    0b000000000000001 => encdec(0b1110110000010000), // ROM[0001] L4: SET R0, 6 => D=A
+    0b000000000000000 => encdec(0b0000000000000110), // ROM[0000] L4 [1/4] SET R0, 6 => @6
+    0b000000000000001 => encdec(0b1110110000010000), // ROM[0001] L4 [2/4] SET R0, 6 => D=A
     // ...
     _ => AInstruction(0b000000000000000)
   }
@@ -127,7 +127,7 @@ function instruction_at(pc : program_counter) -> instruction = {
 
 因此 executor 不在 Python 中解释 A/C 指令。Python 只生成 ROM 映射，真正的解码和执行仍由 Sail 模型完成。
 
-`.hack` 和 driver 共用 `none / summary / full` 级别。`summary` 会给每个 ROM 分支标出地址与源码行，`full` 还会带上原始汇编和 Hack+ 展开，并解释执行阶段、断言来源、Hook 与最终输出。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
+`.hack` 和 driver 共用 `none / summary / full` 级别。默认的 `summary` 会给每个 ROM 分支标出地址与源码行，Hack+ 机器字还带有 `[i/n] 源伪指令 => 正式指令`。`full` 增加完整原始源码文本，并扩展断言来源、Hook 与最终输出解释。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
 
 默认分支只是让函数在类型上完备；正常执行会先由 `execution_complete()` 阻止越过已加载 ROM 的取指。
 
@@ -448,7 +448,7 @@ pixi run just test
 按产物边界从前向后排查：
 
 1. **源码错误**：查看 assembler 的 `line N` 报错；
-2. **编码错误**：运行 `just hack asm NAME`，检查 `.hack` 的源码映射；
+2. **编码错误**：运行 `just hack assemble NAME`，检查 `.hack` 的源码映射；
 3. **metadata 错误**：检查 `.hack` 顶部 `//%hack` 记录；
 4. **driver 错误**：打开 `.driver.sail`，查看 ROM、循环和断言；
 5. **Sail 类型错误**：直接观察 Sail `-c` 输出；
