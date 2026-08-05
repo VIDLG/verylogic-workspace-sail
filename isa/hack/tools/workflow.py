@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
+import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -12,19 +13,19 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 ROOT = PACKAGE_ROOT.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from isa.hack.tools.assembler import (
-    COMMENT_LEVELS,
-    AssemblyError,
-    normalize_hook_path,
-    source_description,
-)
+from isa.hack.tools import executor
+from isa.hack.tools.assembler import AssemblyError, source_description
 from tools import install_sail
+from tools.isa_support.cli import COMMENT_LEVELS, positive_int_arg
+from tools.isa_support.process import run_checked
+from tools.isa_support.publish import remove_tree
 
 PROGRAMS = PACKAGE_ROOT / "programs"
 ISA_DESCRIPTION = "nand2tetris Hack 16-bit CPU ISA"
 ISA_SOURCE = PACKAGE_ROOT / "hack.sail"
-ASSEMBLER = PACKAGE_ROOT / "tools/assembler.py"
+ASSEMBLER = PACKAGE_ROOT / "tools/assembler_cli.py"
 EXECUTOR = PACKAGE_ROOT / "tools/executor.py"
+CONFORMANCE = PACKAGE_ROOT / "tests/isa_conformance.sail"
 
 
 class Program(TypedDict):
@@ -33,20 +34,10 @@ class Program(TypedDict):
     description: str
 
 
-def positive_int(value: str) -> int:
-    try:
-        result = int(value, 0)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from error
-    if result <= 0:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return result
-
-
 def source_path(value: Path) -> Path:
     path = value.resolve()
     try:
-        path.relative_to(PACKAGE_ROOT)
+        _ = path.relative_to(PACKAGE_ROOT)
     except ValueError as error:
         raise ValueError(f"program source escapes the package: {value}") from error
     if not path.is_file():
@@ -67,12 +58,12 @@ def discover_programs() -> list[Program]:
         name = source.stem
         if name in {".", ".."} or "/" in name or "\\" in name:
             raise ValueError(f"program name must be a single path component: {name!r}")
-        programs.append(Program(name=name, source=source, description=description))
+        programs.append({"name": name, "source": source, "description": description})
     return programs
 
 
-def command(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
-    _ = subprocess.run(args, cwd=cwd, env=env, check=True)
+def command(args: Sequence[str | os.PathLike[str]], *, cwd: Path = ROOT) -> None:
+    run_checked(args, cwd=cwd)
 
 
 def selected_program(entries: list[Program], name: str) -> Program:
@@ -95,7 +86,6 @@ def assemble(
     entry: Program,
     *,
     max_steps: int | None = None,
-    hook: str | None = None,
     comments: str = "summary",
 ) -> None:
     output = output_prefix(entry)
@@ -111,8 +101,6 @@ def assemble(
         if max_steps <= 0:
             raise ValueError("--max-steps must be a positive integer")
         arguments.extend(("--max-steps", str(max_steps)))
-    if hook is not None:
-        arguments.extend(("--hook", normalize_hook_path(hook)))
     arguments.extend(("--comments", comments))
     command(arguments)
 
@@ -121,7 +109,6 @@ def run(
     entry: Program,
     *,
     max_steps: int | None = None,
-    hook: str | None = None,
     require_assertions: bool = False,
     comments: str = "summary",
 ) -> None:
@@ -138,8 +125,6 @@ def run(
         if max_steps <= 0:
             raise ValueError("--max-steps must be a positive integer")
         arguments.extend(("--max-steps", str(max_steps)))
-    if hook is not None:
-        arguments.extend(("--hook", normalize_hook_path(hook)))
     if require_assertions:
         arguments.append("--require-assertions")
     arguments.extend(("--comments", comments))
@@ -147,10 +132,11 @@ def run(
 
 
 def test(entries: list[Program]) -> None:
-    environment = os.environ.copy()
-    root = str(ROOT)
-    environment["PYTHONPATH"] = root if not environment.get("PYTHONPATH") else f"{root}{os.pathsep}{environment['PYTHONPATH']}"
-    command([sys.executable, "-m", "pytest", "tests"], cwd=PACKAGE_ROOT, env=environment)
+    command([sys.executable, "-m", "pytest", "isa/hack/tests"], cwd=ROOT)
+    build = PACKAGE_ROOT / ".build"
+    build.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".conformance.", dir=build) as temporary:
+        executor.compile_and_run(Path(temporary) / "isa_conformance", CONFORMANCE)
     for entry in entries:
         print(f"testing {entry['name']}")
         run(entry, require_assertions=True)
@@ -158,22 +144,18 @@ def test(entries: list[Program]) -> None:
 
 def clean() -> None:
     build = PACKAGE_ROOT / ".build"
-    if build.exists():
-        try:
-            shutil.rmtree(build)
-        except PermissionError:
-            username = os.environ.get("USERNAME")
-            if sys.platform != "win32" or not username:
-                raise
-            command(["icacls", str(build), "/grant", f"{username}:(F)", "/T"])
-            shutil.rmtree(build)
+    remove_tree(build)
     _ = build.mkdir()
-    _ = (build / ".gitkeep").write_text("# Sail build outputs are ignored.\n", encoding="utf-8")
+    _ = (build / ".gitkeep").write_text(
+        "# Sail build outputs are ignored.\n", encoding="utf-8"
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the Hack ISA workflow")
-    _ = parser.add_argument("action", choices=("list", "check", "assemble", "run", "test", "clean"))
+    _ = parser.add_argument(
+        "action", choices=("list", "check", "assemble", "run", "test", "clean")
+    )
     _ = parser.add_argument("program", nargs="?")
     _ = parser.add_argument(
         "--comments",
@@ -181,14 +163,17 @@ def main() -> int:
         default="summary",
         help="explanatory artifact comments for assemble/run (default: summary)",
     )
-    _ = parser.add_argument("--max-steps", type=positive_int, help="assemble/run override for source .max_steps")
-    _ = parser.add_argument("--hook", help="assemble/run override for source .hook")
+    _ = parser.add_argument(
+        "--max-steps",
+        type=positive_int_arg,
+        help="assemble/run override for source .max_steps",
+    )
+
     args = parser.parse_args()
     action = cast(str, args.action)
     name = cast(str | None, args.program)
     comments = cast(str, args.comments)
     max_steps = cast(int | None, args.max_steps)
-    hook = cast(str | None, args.hook)
 
     try:
         entries = discover_programs()
@@ -198,15 +183,15 @@ def main() -> int:
                 raise ValueError(f"{action} requires a program name")
             entry = selected_program(entries, name)
             if action == "assemble":
-                assemble(entry, max_steps=max_steps, hook=hook, comments=comments)
+                assemble(entry, max_steps=max_steps, comments=comments)
             else:
-                run(entry, max_steps=max_steps, hook=hook, comments=comments)
+                run(entry, max_steps=max_steps, comments=comments)
         elif name is not None:
             raise ValueError(f"{action} does not accept a program name")
         elif comments != "summary":
             raise ValueError(f"{action} does not accept --comments")
-        elif max_steps is not None or hook is not None:
-            raise ValueError(f"{action} does not accept --max-steps or --hook")
+        elif max_steps is not None:
+            raise ValueError(f"{action} does not accept --max-steps")
         elif action == "check":
             if sail is None:
                 raise AssertionError("check requires project-local Sail")
@@ -219,7 +204,13 @@ def main() -> int:
                 print(f"  {entry['name']}: {entry['description']}")
         else:
             clean()
-    except (OSError, RuntimeError, TypeError, ValueError, subprocess.CalledProcessError) as error:
+    except (
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        subprocess.CalledProcessError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     return 0

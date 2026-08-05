@@ -12,11 +12,11 @@
 pixi run just hack list                  # 列出 programs/*.asm
 pixi run just hack check                 # 类型检查 hack.sail
 pixi run just hack assemble multiply     # 生成 summary 注释的 .build/multiply.hack
-pixi run just hack assemble multiply summary --hook hooks/trace.sail --max-steps 10000
+pixi run just hack assemble multiply summary --max-steps 10000
 pixi run just hack a multiply full       # 短别名；显式请求完整注释
 pixi run just hack run multiply none     # 不生成解释性注释
 pixi run just hack r multiply            # run 的短别名
-pixi run just hack run multiply summary --hook hooks/trace.sail --max-steps 10000
+pixi run just hack run multiply summary --max-steps 10000
 pixi run just hack test                  # 单元测试 + 所有程序端到端测试
 pixi run just hack clean                 # 删除生成产物
 ```
@@ -25,12 +25,13 @@ pixi run just hack clean                 # 删除生成产物
 
 | 路径 | 用途 |
 | --- | --- |
-| `hack.sail` | ROM 存储、原始机器字取指、A/C 解码、类型化单步执行、ALU、寄存器、RAM 和 PC 状态转换 |
+| `hack.sail` | 标准 nand2tetris Hack 16 位 ISA 模型：ROM 存储、原始机器字取指、A/C 解码、类型化单步执行、ALU、寄存器、RAM 和 PC 状态转换 |
 | `programs/*.asm` | 可运行示例与端到端回归程序 |
-| `tools/assembler.py` | 标准 Hack 汇编、Hack+ 降级和 `.hack` 读写 |
-| `tools/executor.py` | Driver 生成、Sail C 后端编译和执行 |
+| `tools/assembler.py` | 纯库：Hack 解析、符号解析、编码、公共 directive 接入与 Hack+ 降级 |
+| `tools/assembler_cli.py` | 薄 CLI 边界：参数处理、运行配置覆盖与严格 artifact 发布 |
+| `tools/artifact.py` | Manifest 创建、带注释 `.hack` 读写、Hack 严格校验与运行配置覆盖 |
+| `tools/executor.py` | Driver 生成、分阶段 Sail/宿主 C 编译、执行与 artifact closure 发布 |
 | `tools/workflow.py` | 程序发现与命令分派 |
-| `hooks/default.sail` / `hooks/trace.sail` | 空操作默认 Hook 与可选示例 Hook |
 | `tests/` | 汇编器、executor、workflow 和 Sail 一致性测试 |
 | `.build/` | Git 忽略的机器码、driver、C 和可执行产物 |
 
@@ -38,7 +39,9 @@ pixi run just hack clean                 # 删除生成产物
 
 Sail 模型拥有 `ROM : vector(32768, word)`。`fetch_hack(pc)` 返回 `pc` 处的原始 16 位机器字，`hack_step()` 组合取指 → `decode_hack` → 执行并返回类型化结果。因此所有 A/C 解码都属于模型，而不属于 Python。
 
-生成的 driver 通过 `load_program()` 写出原始 `ROM[index] = word` 赋值和可选源码注释；它不再生成 `instruction_at`、`execute_at` 或地址到解码结果的 match。小函数 `execution_should_continue(pc, steps)` 集中表达 HALT metadata、映像边界和步数预算条件；生成的 `main()` 直接匹配每次 `hack_step()` 的结果，并在循环后验证真正的停止原因。到达 HALT metadata 是有效完成，离开已加载映像是显式错误，耗尽默认 100000 步 watchdog 也会失败。标准 Hack 没有架构级 HALT 指令，因此这些策略、Hook、断言和最终输出仍由 driver 负责。
+生成的 driver 通过 `load_program()` 写出原始 `ROM[index] = word` 赋值和可选源码注释；它不再生成 `instruction_at`、`execute_at` 或地址到解码结果的 match。小函数 `execution_should_continue(pc, steps)` 集中表达 HALT metadata、映像边界和步数预算条件；生成的 `main()` 直接匹配每次 `hack_step()` 的结果，并在循环后验证真正的停止原因。到达 HALT metadata 是有效完成，离开已加载映像是显式错误，耗尽默认 100000 步 watchdog 也会失败。标准 Hack 没有架构级 HALT 指令，因此完成、watchdog、断言和最终输出策略仍由 driver 负责。
+
+`run` 会在临时目录中完成整条构建链：汇编 → 严格重载 `.hack` → driver → Sail C → 宿主编译 → 执行。只有执行成功后，才把 `.hack`、`.driver.sail`、`.c`、`.h` 和可执行文件作为一个 artifact closure 发布。因此汇编、编译、断言或执行失败都会保留上一次成功产物。
 
 ## 生成产物的注释级别
 
@@ -58,7 +61,9 @@ pixi run just hack assemble multiply full
 pixi run just hack run multiply full
 ```
 
-机器可读的 `//%hack` metadata 始终保留，`none` 也不例外；executor 依赖其中的断言、HALT 地址、Hook 和步数限制。Driver 注释来自重新加载的 `.hack`，而不是汇编器中未写入文件的隐藏状态。
+每个生成的带注释机器映像 `.hack` 都以一个连续、机器可读的公共 `//%` manifest block 开始。`summary` 和 `full` 使用多行缩进的 canonical S-expression，每一行都带该前缀；`none` 把同一 form 写成单行紧凑 block。Manifest 记录 schema/version、ISA/profile、源码 kind/path、description、注释级别、解析后的 `max_steps` 值/origin、断言、completion 和 Hack metadata。Hack 直接汇编没有额外 frontend 转换链，因此省略空 `provenance`。`completion` 明确为 `lowered_self_loop` 和 word 地址。`none` 不保留人类 preamble，但 manifest block 始终存在；Driver 配置与注释只来自严格重载后的 `.hack`，不依赖隐藏汇编状态。
+
+Manifest v1 对公共形状和 Hack 专属字段都做精确校验。Loader 会检查规范断言 target/range、相等/有序模式、源码 display 拼写、安全且规范化的源码路径、Hack metadata 常量、符合 comment level 的 manifest 布局，并确认每个 completion 地址确实指向降级后的 `@address; 0;JMP` 机器字。`load_hack()` 只接受这种严格带注释格式。
 
 ### Hack+ 展开现场
 
@@ -88,7 +93,7 @@ HALT
 .assert R2 == 42
 ```
 
-`.description` 只供 `hack list` 使用；它不生成机器字，不进入 `AssemblyMetadata`，也不写入 `.hack`。
+`.description` 不生成机器字；它既供 `hack list` 使用，也会保留在 assembly metadata 并写入公共 artifact manifest。
 
 新增程序：
 
@@ -113,6 +118,7 @@ HALT
 .assert signed(R0) >= -5
 .assert unsigned(R1) <= 0xFFFF
 .assert PC == 2
+.assert unsigned(PC) < 100
 ```
 
 可断言目标：
@@ -121,15 +127,14 @@ HALT
 A  D  PC  R0..R15  RAM[0]..RAM[32767]
 ```
 
-支持 `==`、`!=`、`<`、`<=`、`>`、`>=`。相等比较按位精确判断；普通 16 位目标的关系比较默认按有符号数解释，`signed(...)` 和 `unsigned(...)` 可以显式选择模式。`PC` 始终是无符号 15 位。
+支持 `==`、`!=`、`<`、`<=`、`>`、`>=`。公共 directive 契约规定 `==`/`!=` 按位精确比较，并禁止在相等比较中使用 `signed(...)` 或 `unsigned(...)` wrapper。所有有序比较都必须显式写成 `signed(target)` 或 `unsigned(target)`，不存在隐式 signed 默认。Hack 还会拒绝 `signed(PC)`，因为 `PC` 是无符号 15 位值。
 
 | 语法 | 语义 | 右值范围 |
 | --- | --- | --- |
-| `.assert target == value` / `!=` | 位精确比较 | 机器字：`-32768..65535`；`PC`：`0..32767` |
-| `.assert target < value` 等 | 默认有符号 16 位关系比较 | `-32768..32767` |
-| `.assert signed(target) op value` | 显式有符号关系比较 | `-32768..32767` |
-| `.assert unsigned(target) op value` | 显式无符号关系比较 | `0..65535` |
-| `.assert PC op value` | 无符号 15 位关系比较 | `0..32767` |
+| `.assert target == value` / `!=` | 无 wrapper 的位精确比较 | 机器字：`-32768..65535`；`PC`：`0..32767` |
+| `.assert signed(target) op value` | 显式有符号有序比较 | `-32768..32767` |
+| `.assert unsigned(target) op value` | 显式无符号有序比较 | `0..65535` |
+| `.assert unsigned(PC) op value` | 显式无符号 15 位有序比较 | `0..32767` |
 
 ### 成功
 
@@ -160,18 +165,16 @@ Assertion failed: assertion D == 0x0002 from source line 6 failed
 ## 其他源码指令
 
 ```asm
-.hook hooks/trace.sail
 .max_steps 10_000
 ```
 
-- `.hook` 选择一个包内相对 `.sail` Hook；绝对路径和 `..` 会被拒绝。CLI `--hook` 可在组装 artifact 或运行时覆盖它。
 - `.max_steps` 在存在 `HALT` 时作为超时保护；程序没有 `HALT` 且带断言时，它表示显式请求的定步状态快照。CLI `--max-steps` 可为 `assemble` 或 `run` 覆盖它；两处都未显式设置时，executor 使用 100000 步 watchdog，耗尽预算即报错。
-- 运行配置优先级统一为 `CLI 覆盖 > 源码 directive > 默认值`。最终 CLI 覆盖值会先写入 `.hack` metadata 再严格 reload，因此 driver 生成不依赖隐藏的内存状态。
-- 点指令不生成机器字；断言、HALT 地址、Hook 和步数限制会进入执行 metadata。
+- 运行配置优先级统一为 `CLI 覆盖 > 源码 directive > 默认值`。默认 `max_steps=100000` 会具体化并标记 `origin=default`；源码与 CLI 值分别标记 `origin=source`、`origin=cli`。
+- 有效 override 会先写入 `.hack` 再严格 reload，因此 driver 生成不依赖隐藏的内存状态。
+- `.description`、`.max_steps`、`.assert` 使用 `tools.isa_support.directives`，都不生成机器字。
 
 | 关注点 | 源码形式 | CLI 形式 | 分类 |
 | --- | --- | --- | --- |
-| Hook 选择 | `.hook path` | `--hook path` | 可覆盖运行配置 |
 | 步数预算 | `.max_steps N` | `--max-steps N` | 可覆盖运行配置 |
 | 程序说明 | `.description text` | 无 | discovery 使用的源码身份信息 |
 | 架构状态检查 | `.assert ...` | 无 | 源码拥有的回归契约；CLI 不可削弱或替换 |
@@ -196,19 +199,6 @@ Assertion failed: assertion D == 0x0002 from source line 6 failed
 | `HALT` | 生成私有两指令自循环并记录结束地址 |
 
 Hack+ 在收集标签前全部降级为标准 Hack A/C 指令，不扩展 ISA。一条伪指令若展开为 `n` 条正式指令，带注释产物会把对应机器字标成 `[1/n]` 到 `[n/n]`；普通 A/C 指令不显示展开标记。完整展开和寄存器副作用见 [Hack+ 降级](https://vidlg.github.io/verylogic-workspace-sail/zh/hack/isa#hack-如何降级为正式指令)。
-
-## Sail Hook API
-
-选中的 Hook 定义：
-
-| 函数 | 调用时机 |
-| --- | --- |
-| `hack_hook_before_run()` | 执行前一次 |
-| `hack_hook_before_step(step)` | 每条指令之前 |
-| `hack_hook_after_step(step)` | 每条指令之后 |
-| `hack_hook_after_run(steps)` | 断言通过后、最终输出前 |
-
-Hook 与 `hack.sail` 和生成 driver 运行在同一个 Sail/C 进程中，可以读写 `ROM`、`A`、`D`、`PC` 和 `RAM`。自定义 Hook 会替换空操作的 `hooks/default.sail` 实现。
 
 ## 学习实现
 

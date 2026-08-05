@@ -9,11 +9,13 @@ def test_bundled_programs_are_discovered_and_selected_from_sources() -> None:
     entries = workflow.discover_programs()
 
     assert [(entry["name"], entry["description"]) for entry in entries] == [
-        ("basic_alu", "ALU arithmetic, bitwise operations, negation, and conditional branch"),
+        (
+            "basic_alu",
+            "ALU arithmetic, bitwise operations, negation, and conditional branch",
+        ),
         ("divide", "Repeated-subtraction division: 100 divided by 7"),
         ("fibonacci", "Iterative Fibonacci F(10) with loop control"),
         ("gcd", "Subtraction-based Euclidean GCD of 1071 and 462"),
-        ("isa_conformance", "Direct Sail checks for ALU, jumps, destinations, and state transitions"),
         ("multiply", "Repeated-addition multiplication: 6 times 7"),
     ]
     assert workflow.selected_program(entries, "gcd")["source"].name == "gcd.asm"
@@ -32,14 +34,21 @@ def test_discovery_is_direct_only_and_requires_descriptions(
     nested = programs / "nested"
     nested.mkdir()
     (nested / "ignored.asm").write_text("@0\n", encoding="utf-8")
-    (programs / "ignored.txt").write_text(".description Not assembly\n", encoding="utf-8")
+    (programs / "ignored.txt").write_text(
+        ".description Not assembly\n", encoding="utf-8"
+    )
     monkeypatch.setattr(workflow, "PACKAGE_ROOT", package_root)
     monkeypatch.setattr(workflow, "PROGRAMS", programs)
 
-    assert [entry["name"] for entry in workflow.discover_programs()] == ["alpha", "zeta"]
+    assert [entry["name"] for entry in workflow.discover_programs()] == [
+        "alpha",
+        "zeta",
+    ]
 
     (programs / "missing.asm").write_text("@0\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"missing\.asm: missing \.description directive"):
+    with pytest.raises(
+        ValueError, match=r"missing\.asm: missing \.description directive"
+    ):
         workflow.discover_programs()
 
     outside = tmp_path / "outside.asm"
@@ -53,27 +62,22 @@ def test_artifact_and_execution_options_are_forwarded_to_tools(
 ) -> None:
     source = tmp_path / "program.asm"
     source.write_text(".description Test\n@0\n", encoding="utf-8")
-    entry: workflow.Program = {"name": "program", "source": source, "description": "Test"}
+    entry: workflow.Program = {
+        "name": "program",
+        "source": source,
+        "description": "Test",
+    }
     commands: list[list[str]] = []
 
     monkeypatch.setattr(workflow, "PACKAGE_ROOT", tmp_path)
-    monkeypatch.setattr(workflow, "command", lambda args, **_kwargs: commands.append(args))
+    monkeypatch.setattr(
+        workflow, "command", lambda args, **_kwargs: commands.append(args)
+    )
 
-    workflow.assemble(
-        entry,
-        max_steps=12,
-        hook="hooks/default.sail",
-    )
-    workflow.run(
-        entry,
-        max_steps=25,
-        hook="hooks/trace.sail",
-        comments="none",
-    )
+    workflow.assemble(entry, max_steps=12)
+    workflow.run(entry, max_steps=25, comments="none")
 
     assert ["--max-steps", "12"] == commands[0][5:7]
-    assert ["--hook", "hooks/default.sail"] == commands[0][7:9]
     assert commands[0][-2:] == ["--comments", "summary"]
     assert ["--max-steps", "25"] == commands[1][5:7]
-    assert ["--hook", "hooks/trace.sail"] == commands[1][7:9]
     assert commands[1][-2:] == ["--comments", "none"]

@@ -59,9 +59,37 @@ Respect each machine's memory organization:
 - a unified-memory machine such as RV32I, Pancake, or SUBLEQ loads the image into normal memory, so fetch observes the same bytes or words that execution may modify;
 - unusual instruction records remain architecture-specific: SUBLEQ fetches three raw address bytes and does not invent an opcode decoder.
 
-The generated driver is a test platform. It may own reset/load orchestration, metadata-based completion or pseudo-HALT detection, watchdog limits, hooks or tracing, source assertions, and host output. Distinguish an architectural halt/trap outcome from a loop stopping policy: a step budget may stop the driver without representing successful ISA completion. A normal executor run must have a finite watchdog; exhausting a default or watchdog-mode budget is a failure, while bounded completion must be explicitly requested and paired with observable assertions. For runtime settings that have both source directives and CLI flags, use one documented precedence (`CLI > source > default`) and serialize effective overrides into the generated artifact before reloading it; do not let driver generation consume hidden pre-artifact state. Keep subtle loop-entry conditions in one clearly named driver helper, then validate the actual stop reason after the loop. Only a real encoded halt/trap belongs in the model; ROM-end policy, lowered self-loop metadata, and `max_steps` remain in the driver. Those responsibilities must not replace the model's fetch/decode/execute path.
+The generated driver is a test platform. It may own reset/load orchestration, metadata-based completion or pseudo-HALT detection, watchdog limits, source assertions, and host output. Distinguish an architectural halt/trap outcome from a loop stopping policy: a step budget may stop the driver without representing successful ISA completion. A normal executor run must have a finite watchdog; exhausting a default or watchdog-mode budget is a failure, while bounded completion must be explicitly requested and paired with observable assertions. For runtime settings that have both source directives and CLI flags, use one documented precedence (`CLI > source > default`) and serialize effective overrides into the generated artifact before reloading it; do not let driver generation consume hidden pre-artifact state. Keep subtle loop-entry conditions in one clearly named driver helper, then validate the actual stop reason after the loop. Only a real encoded halt/trap belongs in the model; ROM-end policy, lowered self-loop metadata, and `max_steps` remain in the driver. Those responsibilities must not replace the model's fetch/decode/execute path.
 
-## 5. Illegal and reserved encodings
+## 5. Teaching source directives and annotated artifacts
+
+All ISA packages share one small teaching-source contract while retaining ISA-specific target and value semantics:
+
+- `.description <text>` gives a bundled lesson a stable human identity and is persisted into generated artifacts;
+- `.max_steps <positive integer>` configures the finite executor watchdog without emitting an instruction;
+- `.assert <target> == <integer>` and `!=` compare the target's exact bit pattern;
+- ordered comparisons require `signed(<target>)` or `unsigned(<target>)` explicitly;
+- equality assertions must not use signed/unsigned wrappers.
+
+The shared parser owns this surface grammar, integer syntax, duplicate singleton directives, and comparison-mode spelling. Each ISA owns target canonicalization, aliases, widths, ranges, alignment, and the generated Sail expression. A frontend such as constrained C may carry the same directives in source comments: every marked directive line must be parsed immediately, malformed or unknown marked lines must fail rather than disappear, and generated teaching assembly must preserve the original source line used by diagnostics.
+
+Generated annotated machine images begin with exactly one contiguous, versioned `//%` manifest block. Its common envelope records schema/version, ISA/profile, stable source identity, description, comment level, resolved runtime settings and their origins, canonical assertions plus source display spelling, optional non-empty frontend provenance, completion metadata, and ISA metadata; the public envelope has no executor metadata field. The wire syntax is a repository-defined canonical restricted S-expression, not executable Lisp and not JSON: one proper `(artifact ...)` list containing only symbols, UTF-8 quoted strings, decimal integers, and proper lists. Reject floats, quote/quasiquote forms, dotted pairs, vectors/brackets, keywords, reader booleans, reserved `nil`/`t`, duplicate or unknown fields, and non-canonical formatting. Generic nested values use explicit `(object ...)` and `(array ...)` containers plus `none`, `true`, and `false`; assertions use declarative comparison ASTs such as `(assert (<= (signed R6) -5) (source-line 68))`. `sexpdata` is only a bounded tokenizer/parser; repository code enforces the subset, grammar, one-form rule, depth/node limits, and parse-then-render canonical equality. Define persisted common and ISA-specific shapes as strict, frozen Pydantic v2 models with forbidden extra fields; use validators for local field invariants, but keep machine-context checks such as profile closure, target canonicalization, address alignment, and completion-word binding in the ISA artifact codec. At `summary` and `full`, render one indented form across multiple consecutive lines, prefixing every line with `//% `; at `none`, render the same form as one compact prefixed line. Human-readable preambles derive from the same validated model at `summary` and `full`; `none` retains only the machine-readable manifest block. Annotated artifact loaders are strict: raw or external machine-code formats require separate explicitly named frontends and must not receive invented execution metadata through a permissive fallback.
+
+The wire contract is library-neutral: Python currently uses `sexpdata`, while a future Rust implementation may use `lexpr`/`serde-lexpr`; neither library's broader dialect may redefine the repository subset or canonical spelling.
+
+Runtime settings follow `CLI > source > default`. Resolve them before writing the machine image, serialize the concrete value and origin, strictly reload the file, and generate the driver only from that reloaded contract. Never pass an override to driver generation as hidden Python state.
+
+Keep information at the layer where it is most useful:
+
+- source: intent, labels, aliases, pseudoinstructions, directives, and optional C line provenance;
+- teaching assembly: normalized target assembly while preserving useful aliases and pseudo lineage;
+- machine image: global manifest plus per-word source/canonical/bits provenance according to comment level;
+- generated driver: the same global identity and runtime contract, raw image loads, loop policy, assertions, and diagnostic output;
+- ISA model: architectural state, fetch/decode/execute/step, legality, and commit behavior only.
+
+Shared Python infrastructure under `tools/isa_support` owns directive grammar, Pydantic manifest models, canonical restricted S-expression parsing/rendering, process execution, host-C compilation, and rollback-capable artifact publication. ISA packages depend on that infrastructure; the shared package must never import an ISA. Import canonical APIs from their defining submodules; do not add compatibility aliases or broad facade re-exports without a real versioned consumer. Share mechanisms, not assembler semantics or driver policy.
+
+## 6. Illegal and reserved encodings
 
 - A wildcard/default decode branch may return `DecodeIllegal`, `Reserved`, or an equivalent outcome; it must not manufacture a legal instruction.
 - Preserve the raw word when it improves diagnostics or downstream handling.
@@ -69,9 +97,9 @@ The generated driver is a test platform. It may own reset/load orchestration, me
 - Illegal/reserved/fault outcomes must not partially update architectural state.
 - If an ISA profile has no illegal machine encoding space, document that fact instead of inventing a fake failure branch. SUBLEQ's fetched A/B/C byte record is one such case.
 
-## 6. Architecture-local design
+## 7. Architecture-local design
 
-Share conventions, not accidental structure. Each ISA owns its state, decode contract, execution outcome, assembler, driver, and tests. Keep official terms such as `XLEN`, `IALIGN`, instruction mnemonics, and architectural register names recognizable.
+Share conventions and infrastructure, not accidental architecture structure. Each ISA owns its state, decode contract, execution outcome, assembly syntax/lowering/encoding, artifact-specific validation, generated driver template and completion policy, workflow stages, and tests. Common source directives, manifest primitives, publication, and host build mechanics remain workspace infrastructure. Keep official terms such as `XLEN`, `IALIGN`, instruction mnemonics, and architectural register names recognizable.
 
 When extending an ISA:
 

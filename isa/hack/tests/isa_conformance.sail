@@ -155,7 +155,7 @@ function test_step() -> unit = {
   assert (PC == 0b111010100110001 & D == 0x1234, "illegal step does not commit state")
 }
 
-function hack_hook_before_run() -> unit = {
+function main() -> unit = {
   test_encoding();
   test_alu();
   test_jump_conditions();
@@ -168,7 +168,3 @@ function hack_hook_before_run() -> unit = {
   RAM[0] = 0x0000;
   print_endline("CONFORMANCE PASS")
 }
-
-function hack_hook_before_step(_step : int) -> unit = { () }
-function hack_hook_after_step(_step : int) -> unit = { () }
-function hack_hook_after_run(_steps : int) -> unit = { () }
