@@ -1,6 +1,6 @@
 # Hack 执行器与测试工作流
 
-[← 汇编器内部原理](/zh/hack/assembler) · [Hack 概览](/zh/hack/) · [English](/hack/execution)
+[← 汇编器内部原理](/zh/hack/assembler) · [公共教学契约](/zh/reference/teaching-contract) · [English](/hack/execution)
 
 本文沿着 [`executor.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/executor.py) 和 [`workflow.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/workflow.py) 的调用链，解释 Hack 机器码怎样通过 Sail C 后端变成宿主机可执行程序，以及单元测试、ISA 一致性测试和汇编程序集成测试怎样组成闭环。
 
@@ -9,7 +9,8 @@
 | 文件 | 负责什么 | 不负责什么 |
 | --- | --- | --- |
 | `hack.sail` | ROM 存储、原始机器字取指、A/C 解码、类型化 `hack_step()`、ALU、寄存器、RAM 和 PC 状态转换 | 加载特定程序映像、特定程序的 `main()`、测试程序发现 |
-| `executor.py` | 生成程序专属 driver、加载原始 ROM、运行控制、调用 Sail/C 编译、断言和输出 | A/C 解码、程序发现和批量测试策略 |
+| `artifact.py` | 序列化 runtime override、创建文件开头的 manifest block、原子写 `.hack`、严格加载与 Hack-specific manifest/completion 校验 | 指令解析、driver 策略或模型语义 |
+| `executor.py` | Staged driver generation、加载原始 ROM、运行控制、Sail/C 编译、断言、执行与 closure 发布 | A/C 解码、程序发现和批量测试策略 |
 | `workflow.py` | 发现源码、选择程序、组织 `check/assemble/run/test/clean` | ISA 语义和机器状态判断 |
 
 这种拆分让 `hack.sail` 保持为可复用的 ISA 模型。换一个 Hack 程序只需要生成新的 ROM 加载器和 driver，不需要改取指、解码或 CPU 语义。
@@ -26,7 +27,7 @@ flowchart TD
     Sail --> C[generated .c and .h]
     C --> Compiler[GCC or MinGW + Sail runtime + GMP]
     Compiler --> Native[native executable]
-    Native --> Result[ROM load + hooks + hack_step loop + Sail assertions]
+    Native --> Result[ROM load + hack_step loop + Sail assertions]
 ```
 
 ## 为什么 `hack.sail` 没有 `main()`
@@ -35,7 +36,6 @@ ISA 模型拥有架构 ROM，并回答“一步执行怎样取出原始机器字
 
 - 要把哪些原始机器字加载进 ROM？
 - 什么时候算执行完成？
-- 每步前后是否调用 Hook？
 - 最终检查哪些断言？
 - 打印哪些状态？
 
@@ -48,28 +48,26 @@ ISA 模型拥有架构 ROM，并回答“一步执行怎样取出原始机器字
 ```text
 1. 校验 CLI 参数
 2. assemble(program) 得到 AssemblyResult
-3. 计算 CLI/source 的有效 `max_steps` 与 Hook 设置
-4. 把 CLI 覆盖应用到 assembly metadata
-5. 检查断言要求与 ROM 大小
-6. 删除同名前次构建产物
-7. write_hack() 写入 <output>.hack
-8. load_hack() 从磁盘严格重新加载
-9. write_driver() 生成 <output>.driver.sail
-10. 从重载 metadata 安全解析 Hook 文件
-11. Sail 生成 C
-12. C 编译器链接运行时和 GMP
-13. 运行宿主机可执行程序
+3. 按 CLI > source > default 解析有效 `max_steps`
+4. 检查断言要求与 ROM 大小
+5. 创建临时 sibling staging directory
+6. write_hack() 写入 staged <output>.hack
+7. load_hack() 从磁盘严格重新加载
+8. 从 LoadedHack 生成 staged <output>.driver.sail
+9. Sail 生成 staged C/header
+10. C 编译器把 staged native executable 与 Sail runtime/GMP 链接
+11. 运行 staged executable 及其中的 Sail assertions
+12. 把完整 staged closure 发布到最终路径
 ```
 
-最关键的设计点是第 7、8 步。最终 CLI 覆盖值会先序列化进 `.hack`；executor 不把汇编阶段的内存对象直接传到 driver。详见 [汇编器原理：为什么要重新加载](/zh/hack/assembler#为什么还要-load_hack)。
+第 6、7 步形成持久化信任边界：有效 CLI override 会在 driver generation 前序列化进 `.hack`。第 12 步形成发布边界：只有 staged execution 成功才更新最终名称。详见[为什么要重新加载](/zh/hack/assembler#为什么还要-load_hack)和[公共发布契约](/zh/reference/teaching-contract#staging-与发布)。
 
 ### 哪些配置属于哪个入口
 
 | 关注点 | 源码 | CLI | 原因 |
 | --- | --- | --- | --- |
-| Hook | `.hook` | `--hook` | 单次运行可变策略 |
 | 步数预算 | `.max_steps` | `--max-steps` | 单次运行可变策略 |
-| 程序说明 | `.description` | 无 | discovery 使用的源码身份 |
+| 程序说明 | `.description` | 无 | Discovery identity 与 manifest 内容 |
 | 状态检查 | `.assert` | 无 | 源码拥有的回归契约 |
 | Artifact 注释 | 无 | `--comments` | 仅宿主展示策略 |
 | 输出 prefix | 无 | `--output` | 宿主文件系统策略 |
@@ -91,11 +89,11 @@ executor 可能生成：
 | --- | --- | --- |
 | `multiply.hack` | `write_hack()` | 机器字和运行 metadata 的稳定边界 |
 | `multiply.driver.sail` | `write_driver()` | 程序专属 ROM 加载行、运行控制、断言和输出 |
-| `multiply.c` | Sail C 后端 | ISA + Hook + driver 的 C 实现 |
+| `multiply.c` | Sail C 后端 | ISA + driver 的 C 实现 |
 | `multiply.h` | Sail C 后端 | 生成 C 的声明 |
 | `multiply.exe`（Windows）或 `multiply`（Linux） | C 编译器 | 最终宿主机程序 |
 
-每次运行前会删除同名旧产物，避免编译失败后误运行历史可执行文件。Windows 上若旧文件权限阻止删除，代码会尝试通过 `icacls` 恢复当前用户权限。
+完整 `run` 在临时 sibling directory 中创建、编译并执行这些文件，只有 execution/assertions 成功才发布整个 closure。Backup-and-replace 发布在安装失败时恢复先前目标；staged build 或 run 失败会保留先前已发布 closure。
 
 ## `LoadedHack` 是 executor 的真正输入
 
@@ -106,7 +104,8 @@ executor 可能生成：
 class LoadedHack:
     words: list[int]
     metadata: AssemblyMetadata
-    word_comments: tuple[str | None, ...] = ()
+    word_comments: tuple[str | None, ...]
+    manifest: HackManifest
 ```
 
 这里没有解析器 AST、符号表或 Python 端隐藏状态。driver 的所有程序行为只能来自：
@@ -114,10 +113,19 @@ class LoadedHack:
 - `.hack` 中的机器字；
 - `.hack` 顶部结构化 metadata；
 - 从 `.hack` 重新加载的可选逐机器字教学注释；
-- 固定的 `hack.sail`；
-- metadata 选择的包内 Hook。
+- 固定的 `hack.sail`。
 
-`test_run_uses_hook_path_from_reloaded_metadata` 专门验证 Hook 选择来自**重载结果**，而不是先前的 `AssemblyResult`。
+这里的 loader 专指宿主侧 Python artifact loader `isa/hack/tools/artifact.py::load_hack()`，不是 generated `load_program()`，也不是 Sail 模型里的 `fetch_hack()`。Artifact loader 与 driver 对各 manifest 字段的消费方式并不相同：
+
+| Manifest 数据 | 消费者与作用 |
+| --- | --- |
+| `completion` | `artifact.py` 校验 `lowered-self-loop`、word addressing、地址排序/范围，以及实际的 `@address; 0;JMP` 机器字。地址随后成为 `AssemblyMetadata.halt_addresses`，`executor.py` 据此生成 `lowered_halt_n` 常量和 completion 检查。 |
+| `runtime.max-steps` | 重载为 `AssemblyMetadata.max_steps`；`executor.py` 据此生成 `driver_max_steps`。 |
+| `assertions` | 规范化并重载为 `AssemblyMetadata.assertions`；`executor.py` 据此生成 Sail assertions。 |
+| `comments` | 约束严格的逐机器字注释布局，并且必须与请求的 driver 展示档位一致。 |
+| `isa`、`profile`、`isa-metadata` | `load_hack()` 检查 artifact 的 `hack/standard` identity 与常量是否精确匹配当前所选模型，并拒绝篡改或不一致；它们不会生成 driver 常量。`loaded_rom_words` 来自实际重载的机器字数量，架构位宽和容量则由 `hack.sail` 定义。 |
+| `source`、`description` | 用于 identity 和人类可读 preamble，不参与执行语义。 |
+| `provenance` | Hack 直接汇编没有额外 frontend 转换链，因此省略。 |
 
 ## driver 怎样加载模型自有的 ROM
 
@@ -148,7 +156,7 @@ function load_program() -> unit = {
 
 Python 只重新加载机器字并写出这些 ROM 加载行，从不解码 A 指令或 C 指令；合法性检查、解码和执行都留在 Sail 中。`hack_step()` 返回类型化结果，生成的 `main()` 直接匹配该结果：成功退役就继续，非法编码则转成显式的 driver 断言失败。
 
-`.hack` 和 driver 共用 `none / summary / full` 级别。默认的 `summary` 会在每个 `ROM[index] = word` 加载行旁显示规范化汇编源码，Hack+ 机器字还带有 `[i/n] 源伪指令 => 正式指令`，行内汇编注释放在最右侧。`full` 增加精确的原始源码文本，并扩展断言来源、Hook 与最终输出解释。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
+`.hack` 和 driver 共用 `none / summary / full` 级别。默认的 `summary` 会在每个 `ROM[index] = word` 加载行旁显示规范化汇编源码，Hack+ 机器字还带有 `[i/n] 源伪指令 => 正式指令`，行内汇编注释放在最右侧。`full` 增加精确的原始源码文本，并扩展断言来源与最终输出解释。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
 
 `load_program()` 只写入已加载映像。生成的 `main()` 会在每次尝试前调用 `execution_should_continue(PC, steps)`，避免在程序已加载 ROM 范围之外调用 `hack_step()`。
 
@@ -175,7 +183,7 @@ while execution_should_continue(PC, steps) {
 }
 ```
 
-`loaded_rom_words` 由重新加载的 artifact 机器字数量生成；对 `basic_alu` 来说它是 `53`，覆盖 ROM 地址 `0..52`。它不是 `max_steps`，也不限制循环可以重复访问这些地址多少次。每个 `lowered_halt_n` 都来自重新加载的 `//%hack halt {"address": ...}` metadata；对应位型在 Hack ISA 中没有特殊含义。
+`loaded_rom_words` 由重新加载的 artifact 机器字数量生成；对 `basic_alu` 来说它是 `53`，覆盖 ROM 地址 `0..52`。它不是 `max_steps`，也不限制循环可以重复访问这些地址多少次。每个 `lowered_halt_n` 都来自重载后文件开头的 `//%` manifest block 的 `completion.addresses`；对应位型在 Hack ISA 中没有特殊含义。
 
 以下三种情况都会使条件变为 `false`，driver 会在循环后区分：
 
@@ -203,43 +211,24 @@ metadata 记录私有标签地址。driver 在循环开始处发现 `PC` 已等�
 
 ## 生成的运行循环
 
-生成的 `main()` 首先调用 `load_program()`。运行控制在概念上是：
+生成的 `main()` 先加载原始机器字，在 completion 与 watchdog 控制下执行经过检查的模型步骤，最后求值源码断言：
 
 ```ocaml
 load_program();
 var steps : int = 0;
-hack_hook_before_run();
 while execution_should_continue(PC, steps) {
-  hack_hook_before_step(steps);
   match hack_step() {
     HackRetired(()) => (),
     HackIllegalInstruction(_) => assert(false, "illegal Hack instruction encoding")
   };
-  steps = steps + 1;
-  hack_hook_after_step(steps)
+  steps = steps + 1
 };
 assert (unsigned(PC) < loaded_rom_words,
         "program counter left the loaded ROM image");
-// assertions
-hack_hook_after_run(steps);
+// 源码断言
 ```
 
-内联 `match` 在 `HackRetired(())` 时继续，在 `HackIllegalInstruction(_)` 时触发断言。取指、解码和执行仍是模型自有的一个 `hack_step()`；生成的 `main()` 只把类型化结果转换为 driver 策略。
-
-时序契约是：
-
-| 时点 | `step` 含义 |
-| --- | --- |
-| `load_program()` | 执行前填充模型自有的 `ROM` |
-| `before_run()` | 尚未进入运行循环 |
-| `before_step(steps)` | 即将执行的指令编号，从 `0` 开始 |
-| 内联 `match hack_step()` | 检查模型自有的取指 → 解码 → 执行转换结果 |
-| `steps = steps + 1` | 已完成指令数增加 |
-| `after_step(steps)` | 参数从 `1` 开始，表示已完成数量 |
-| `.assert` | 循环结束后检查核心回归契约 |
-| `after_run(steps)` | 只有源码断言通过后才调用 |
-
-executor 组件测试通过检查生成源码中的位置顺序固定了这份契约。
+Driver 负责 completion 检查、watchdog、源码断言和最终输出。取指、解码和执行仍是模型自有的一个 `hack_step()`；生成的 `main()` 只把类型化结果转换为 driver 策略。
 
 ## `max_steps` 的两种语义
 
@@ -295,11 +284,11 @@ RAM[100] -> RAM[100]
 | --- | --- |
 | `R0 == -1` | `RAM[0] == 0xFFFF`，位精确 |
 | `R0 != 0` | `RAM[0] != 0x0000`，位精确 |
-| `R0 < -1` | `signed(RAM[0]) < -1` |
+| `signed(R0) < -1` | `signed(RAM[0]) < -1` |
 | `unsigned(R0) > 32768` | `unsigned(RAM[0]) > 32768` |
-| `PC >= 10` | `unsigned(PC) >= 10` |
+| `unsigned(PC) >= 10` | `unsigned(PC) >= 10` |
 
-相等/不等始终比较机器位；即使源码写了 `signed(R0) == -1`，生成表达式仍按 `0xFFFF` 位值比较。关系运算才使用 `signed()` 或 `unsigned()`。
+相等/不等始终比较架构位型，并拒绝任何 `signed(...)` 或 `unsigned(...)` wrapper；ordered operator 则必须显式使用其中一种 wrapper。公共 parser 先固定这条区别，Hack 再校验 `A`、`D`、`PC`、`R0..R15` 或 `RAM[index]`。
 
 断言错误消息保留原始源码行号，例如：
 
@@ -308,35 +297,6 @@ assertion signed(R0) < -1 from source line 23 failed
 ```
 
 这使运行期失败能够回到 `.asm`，而不是只指向生成的 driver。
-
-## Hook 怎样被选择和约束
-
-Hook 选择使用同一套运行配置优先级：
-
-```text
-CLI --hook > 源码 .hook > hooks/default.sail
-```
-
-`--hook` 与 `.hook` 使用相同的规范化规则。最终路径会在写 `.hack` 前替换源码 metadata，严格 reload 后才由 `resolve_hook_source()` 解析。例如：
-
-```sh
-pixi run just hack run multiply summary --hook hooks/trace.sail --max-steps 10000
-```
-
-安全规则包括：
-
-- 必须是相对 POSIX `.sail` 路径；
-- 不能包含 `..`、绝对路径或盘符；
-- 文件必须存在且是普通文件；
-- `resolve()` 后必须仍位于 `isa/hack` 包目录内。
-
-最终编译的三个 Sail 输入按顺序是：
-
-```text
-hack.sail + selected hook + generated driver
-```
-
-Hook 与 ISA 和 driver 在同一生成程序中，因此能直接访问 `A`、`D`、`PC`、`RAM` 和模型自有的 `ROM`。这也解释了为什么必须限制 Hook 到包内可信源码。
 
 ## Sail 到本机程序的编译链
 
@@ -357,11 +317,10 @@ sail = install_sail.ensure_installed()
 ```sh
 sail -c -o <output-prefix> \
   isa/hack/hack.sail \
-  <selected-hook.sail> \
   <output-prefix>.driver.sail
 ```
 
-Sail 对三个文件整体做类型检查，并生成 `<output>.c` 与 `<output>.h`。
+Sail 对两个文件整体做类型检查，并生成 `<output>.c` 与 `<output>.h`。
 
 ### 3. C 编译、链接并运行
 
@@ -383,10 +342,9 @@ Pixi/Conda 前缀用于定位 GMP 头文件和库。编译成功后，executor �
 
 运行结束且断言通过后，driver：
 
-1. 调用 `hack_hook_after_run(steps)`；
-2. 有断言时打印 `ASSERT PASS`，否则打印 `RUN COMPLETE`；
-3. 打印 `A`、`D`、`PC`；
-4. 打印 `R0..R7`。
+1. 有断言时打印 `ASSERT PASS`，否则打印 `RUN COMPLETE`；
+2. 打印 `A`、`D`、`PC`；
+3. 打印 `R0..R7`。
 
 这些寄存器输出是方便人工观察的摘要，不是测试判定本身。回归是否通过由 Sail `assert` 和进程退出码决定，workflow 不解析打印文本来猜结果。
 
@@ -404,13 +362,13 @@ isa/hack/programs/*.asm
 
 文件按名称排序，文件 stem 就是命令中的程序名。例如 `multiply.asm` 对应 `just hack run multiply`。
 
-每个内置源码必须且只能包含一条非空、仅供源码发现使用的指令：
+每个内置源码必须且只能包含一条非空 description directive：
 
 ```asm
 .description Repeated-addition multiplication: 6 times 7
 ```
 
-assembler parser 负责校验 `.description`，但 `expand()` 会在构造机器码和执行 metadata 前丢弃它；workflow 通过 `source_description()` 获取说明。因此发现信息与程序放在一起，而 `.description` 不会序列化到 `.hack` metadata。
+Assembler parser 校验 `.description`，`source_description()` 把它提供给 workflow discovery，`assemble_text()` 则存入 `AssemblyMetadata`。`artifact.py` 把同一文本序列化为 manifest `description`；它不产生机器字。
 
 `discover_programs()` 还确认每个文件解析后仍位于 Hack 包内并真实存在。直接使用 `glob("*.asm")` 会有意忽略子目录和非汇编文件。
 
@@ -420,12 +378,12 @@ assembler parser 负责校验 `.description`，但 `expand()` 会在构造机器
 | --- | --- |
 | `list` | 发现并打印全部直接 `programs/*.asm` 源码 |
 | `check` | 确保 Sail 已安装，执行 `sail --just-check hack.sail` |
-| `asm NAME` | 调用 assembler CLI，写 `.build/NAME.hack` |
+| `assemble NAME` | 调用 assembler CLI，原子写 `.build/NAME.hack` |
 | `run NAME` | 调用 executor CLI，完成汇编、生成、编译和运行 |
 | `test` | 先运行包内 Pytest，再逐个集成运行全部已发现源码 |
 | `clean` | 重建只含 `.gitkeep` 的 `.build/` |
 
-`isa/hack/justfile` 只是把这些 action 暴露为易记命令；根 `justfile` 再把 Hack 模块纳入全仓库 `test` 和 `clean-all`。
+`isa/hack/justfile` 直接把这些 action 暴露为 `just hack ...` 命令。根 `test` 与 `clean-all` 负责聚合各模块命令。
 
 ## `just hack test` 到底测试什么
 
@@ -438,7 +396,7 @@ flowchart TD
     Programs --> Required[executor --require-assertions]
     Required --> SailRun[compile and run through Sail C backend]
     SailRun --> Assertions[source .assert]
-    SailRun --> Conformance[optional Sail hook checks]
+    Pytest --> Conformance[直接 Sail ISA 一致性检查]
 ```
 
 ### 第一层：汇编器测试
@@ -453,7 +411,6 @@ flowchart TD
 - 检查后的 `hack_step()` 分派和已加载映像越界失败；
 - 有界循环语义；
 - 位精确/有符号/无符号断言；
-- Hook 路径限制和调用顺序；
 - 重载 metadata 是真实数据源。
 
 部分测试通过 monkeypatch 隔离实际 C 编译，专注 Python 边界逻辑。
@@ -470,18 +427,7 @@ executor.py ... --require-assertions
 
 ### 第四层：直接 Sail ISA 一致性测试
 
-`isa_conformance.asm` 选择：
-
-```asm
-.hook tests/isa_conformance.sail
-```
-
-这个 Hook 在 `before_run()` 中直接调用 `alu()`、`should_jump()` 和 `execute()`，覆盖所有 ALU 运算、跳转真值表、destination 掩码、旧 `A` 语义和 PC 回绕。随后小型汇编程序仍通过普通执行循环，并检查最终 `.assert`。
-
-它同时验证两个层次：
-
-- Sail ISA 函数本身；
-- assembler → metadata → Hook → driver → C backend 的集成链。
+`tests/isa_conformance.sail` 直接检查 `alu()`、`should_jump()` 和 `execute()`，覆盖 ALU 运算、跳转真值表、destination 掩码、旧 `A` 语义和 PC 回绕。这一层独立验证 Sail ISA 函数，不依赖 generated-driver 集成路径。
 
 ### 全仓库测试
 
@@ -499,7 +445,7 @@ pixi run just test
 
 1. **源码错误**：查看 assembler 的 `line N` 报错；
 2. **编码错误**：运行 `just hack assemble NAME`，检查 `.hack` 机器字旁的源码注释；
-3. **metadata 错误**：检查 `.hack` 顶部 `//%hack` 记录；
+3. **metadata 错误**：检查 `.hack` 文件开头的 `//%` manifest block；
 4. **driver 错误**：打开 `.driver.sail`，查看 `load_program()` ROM 加载行、检查单步结果的运行控制和断言；
 5. **Sail 类型错误**：直接观察 Sail `-c` 输出；
 6. **C 编译错误**：检查编译器、runtime include、GMP 与平台兼容层；
@@ -515,9 +461,8 @@ pixi run just test
 1. `run`
 2. `write_driver`
 3. `_assertion_expression`
-4. `resolve_hook_source`
-5. `compile_and_run`
-6. `main`
+4. `compile_and_run`
+5. `main`
 
 ### workflow
 
@@ -541,7 +486,6 @@ pixi run just hack run multiply
 - HALT 地址；
 - 生成的运行循环和检查 `hack_step()` 结果的调用；
 - `R2 == 42` 对应的 Sail 断言；
-- Hook 调用顺序。
 
 ### 练习二：写一个定步程序
 
@@ -553,7 +497,7 @@ pixi run just hack run multiply
 
 1. 非法汇编助记符；
 2. 错误 `.assert` 预期值；
-3. Hook 中的 Sail 类型错误；
+3. 生成 driver 中的 Sail 类型错误；
 4. 某个内置源码缺失或重复 `.description`。
 
 观察每个错误在哪一层被捕获。一个清晰的工具链应让错误尽可能在最靠近根因的边界失败。

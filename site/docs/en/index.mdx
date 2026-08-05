@@ -12,18 +12,24 @@ Sail occupies the boundary between an architecture manual and a processor implem
 
 [Compare Sail with prose, C/C++, Verilog/SystemVerilog, and proof assistants →](/why-sail)
 
+## Common teaching contract
+
+ISA modules share source directives, bit-exact and ordered assertion rules, opening annotated machine-image manifest blocks, runtime override precedence, comment levels, strict reload, and staged publication.
+
+[Read the common teaching contract →](/reference/teaching-contract)
+
 ## ISA modules
 
 ### Hack
 
-The 16-bit teaching computer from nand2tetris, modeled in Sail with an assembler, runnable programs, source assertions, hooks, and end-to-end tests.
+The 16-bit teaching computer from nand2tetris, modeled in Sail with an assembler, runnable programs, source assertions, and end-to-end tests.
 
 - [Open the Hack overview →](/hack/)
 - [Open the package reference →](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md)
 
 ## Inside an ISA module
 
-Each module starts with an overview and tutorial, continues with the ISA guide, and places implementation-heavy assembler and execution material under **Toolchain internals**. Modules may omit tool pages that do not apply to their architecture.
+Each module starts with an overview and tutorial, continues with the ISA guide, and places implementation-heavy assembler and execution material under **Toolchain internals**. The [common teaching contract](/reference/teaching-contract) defines shared source/artifact behavior; ISA pages focus on target syntax, encoding, completion, and model semantics.
 
 ## Repository setup
 

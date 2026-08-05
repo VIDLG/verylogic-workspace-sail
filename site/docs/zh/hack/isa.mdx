@@ -2,7 +2,7 @@
 
 [← 入门教程](/zh/hack/tutorial) · [Hack 概览](/zh/hack/) · [English](/hack/isa) · [汇编器内部原理 →](/zh/hack/assembler)
 
-本文只讲 **Hack ISA 本身**：软件能够看到什么状态、机器指令怎样编码，以及一条指令怎样改变状态。运行命令、Hook、断言和 `.hack` 元数据等工具规则见 [Hack 包参考手册](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md)。
+本文只讲 **Hack ISA 本身**：软件能够看到什么状态、机器指令怎样编码，以及一条指令怎样改变状态。运行命令、断言和 `.hack` 元数据等工具规则见 [Hack 包参考手册](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md)。
 
 ## ISA 到底是什么
 
@@ -23,7 +23,7 @@ ISA 不规定加法器由多少个 NAND 门组成、信号需要多久稳定，�
 | 标准 Hack 汇编 | `@2`、`M=D`、`D;JGT` | 是机器指令的文本表示 |
 | 标签与符号 | `(LOOP)`、`@R0`、`@variable` | 汇编器语法，不是 CPU 指令 |
 | Hack+ 伪指令 | `SET`、`JEQ target,label`、`HALT` | 本项目的汇编便利语法，不属于 ISA |
-| 测试指令 | `.assert`、`.hook`、`.max_steps` | 本项目的执行元数据，不进入 ROM |
+| 测试指令 | `.assert`、`.max_steps` | 本项目的执行元数据，不进入 ROM |
 | Sail 模型 | `hack.sail` | 对 ISA 语义的可执行描述 |
 
 最终送给 Hack CPU 的始终只有 16 位 A 指令或 C 指令。
@@ -360,7 +360,7 @@ C 指令字段使用命名位向量类型，而不是匿名的 `bit` / `bits(n)`
 
 - ROM 在 `hack.sail` 中声明；生成的 driver 初始化原始机器字，`fetch_hack` 和 `hack_step` 负责取指与分派；
 - RAM 没有 Screen、Keyboard 的设备副作用；
-- `HALT`、Hack+、`.assert`、`.hook` 和 `.max_steps` 都属于工具层，不属于 Hack ISA；
+- `HALT`、Hack+、`.assert` 和 `.max_steps` 都属于工具层，不属于 Hack ISA；
 - 模型描述架构状态转换，不模拟门延迟、时钟边沿细节或 nand2tetris HDL；
 - 模型通过 Sail C 后端执行，不声明已经完成形式化等价证明。
 

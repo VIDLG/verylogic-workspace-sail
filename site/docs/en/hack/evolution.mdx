@@ -65,11 +65,11 @@ This distinction prevents a common mistake: making the parser accept a mnemonic 
 The right choice depends on whether the experiment must **coexist long-term** with standard Hack:
 
 - **A personal branch or class exercise:** modify `isa/hack/` directly. This is the shortest path and makes the complete change surface easy to observe. Create a branch first and keep the standard regression suite as the compatibility baseline.
-- **Tooling that still emits standard Hack words:** implement it in the existing module. New pseudoinstructions, traces, and diagnostics should preserve default behavior; enable experimental behavior through explicit syntax, a Hook, or an option.
-- **A platform experiment:** prefer a separate Hook, driver option, or named recipe so the same standard ISA can run in different teaching environments. Consider a separate package only after the platform becomes a durable product.
+- **Tooling that still emits standard Hack words:** implement it in the existing module. New pseudoinstructions, traces, and diagnostics should preserve default behavior; enable experimental behavior through explicit syntax, a driver option, or a named recipe.
+- **A platform experiment:** prefer a driver option or named recipe so the same standard ISA can run in different teaching environments. Consider a separate package only after the platform becomes a durable product.
 - **A real ISA change that will be committed and maintained:** do not silently redefine nand2tetris Hack in `isa/hack/hack.sail`. Name the machine, such as `HackShift` or `Hack32`, and create a sibling module such as `isa/hack32/` with its own Sail model, assembler, programs, tests, README, artifact identity, and root command.
 
-Standard Hack currently has one small Sail file, so this workspace does not preemptively copy the RISC-V profile registry for variants that do not exist. If two or more durable Hack derivatives eventually coexist and demonstrably share stable implementation, extract common assembler or executor helpers from that real duplication. Do not build an abstraction framework first and make every student experiment conform to it.
+Standard Hack is intentionally represented by one small Sail file; the workspace does not add a profile registry for nonexistent variants. If two or more durable Hack derivatives coexist and demonstrably share stable implementation, extract common assembler or executor helpers from that real duplication. Do not build an abstraction framework first and make every student experiment conform to it.
 
 In short: **an exercise may modify in place, the standard baseline must not be silently renamed, and a durable variant needs an identity.** Even a backward-compatible derived ISA should put its own name in metadata, commands, documentation, and test reports so its results cannot masquerade as standard Hack.
 
@@ -94,7 +94,7 @@ For `PUSH`, `POP`, `CALL`, or `RET`, first write down a stack and calling conven
 
 Possible projects:
 
-- a hook that traces `PC`, the decoded instruction, and changed state;
+- a driver trace that records `PC`, the decoded instruction, and changed state;
 - breakpoints or watchpoints implemented in the driver;
 - a `.hack` disassembler that displays canonical A/C syntax;
 - a step-by-step HTML trace linking source, ROM word, and state transition;
@@ -152,7 +152,7 @@ At this point, give the dialect or ISA a new name rather than silently redefinin
 | --- | --- |
 | Hack+ pseudoinstruction | `assembler.py` parser/lowering, expansion tests, examples, package reference |
 | Artifact explanation | writer/loader contract, driver comment propagation, comment-level tests, docs |
-| Execution observation | hook or executor/driver, deterministic tests, execution guide |
+| Execution observation | executor/driver, deterministic tests, execution guide |
 | Memory-mapped device | platform state and read/write semantics, driver input/output, Sail and end-to-end tests |
 | New encoded instruction | `hack.sail` decode/execute, assembler encoding, independent known words, conformance and integration tests, ISA guide |
 | New frontend such as VM-to-Hack | separate translator, canonical `.asm` boundary, source provenance, translator and end-to-end tests |

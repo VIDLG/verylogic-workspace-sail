@@ -1,8 +1,8 @@
 # Hack 汇编器内部原理
 
-[← Hack ISA](/zh/hack/isa) · [Hack 概览](/zh/hack/) · [English](/hack/assembler) · [执行器与测试 →](/zh/hack/execution)
+[← Hack ISA](/zh/hack/isa) · [公共教学契约](/zh/reference/teaching-contract) · [English](/hack/assembler) · [执行器与测试 →](/zh/hack/execution)
 
-本文以 [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) 为主线，解释一个小型但完整的汇编器怎样把 `.asm` 源码变成 16 位 Hack 机器码。它不是 Python API 逐函数抄录，而是一次“编译器阶段为什么要这样排”的导读。
+本文沿着 [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) 与 [`artifact.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/artifact.py)，解释源码怎样变成 16 位 Hack 机器码，再跨越严格的持久化 artifact 边界。共享 directive 与 manifest 规则见[公共教学契约](/zh/reference/teaching-contract)。`assembler.py` 保持为纯库，`assembler_cli.py` 是处理参数与发布的薄 CLI 边界。
 
 ## 汇编器负责什么
 
@@ -18,13 +18,12 @@ D=M                   // 标准 C 指令
 .max_steps 1000
 ```
 
-解析后的源码有三个去向：
+解析后的源码有两个去向：
 
 1. `records`：真正进入 ROM 的 `MachineWord`；
-2. 执行 `metadata`：HALT 地址、断言、步数限制和 Hook 路径；
-3. 仅属于源码的 `.description`：供 workflow 使用，在构造 `AssemblyResult` 前丢弃。
+2. `AssemblyMetadata`：HALT 地址、断言、带 origin 的有效运行配置、source identity 与 `.description`。
 
-这种分离既保证 `.assert` 等测试能力不会伪装成 Hack 指令，也让程序发现说明保持在可执行 `.hack` 契约之外。
+Workflow 通过同一 parser 读取 description 以发现程序；`artifact.py` 再把它序列化进 `.hack` manifest，而 directive 仍不产生 ROM word。教学 metadata 因此可观察，但不会伪装成 Hack 代码。
 
 ```mermaid
 flowchart TD
@@ -36,7 +35,7 @@ flowchart TD
     Pass2 --> Result[AssemblyResult]
     Result --> Writer[write_hack]
     Writer --> Artifact[annotated .hack]
-    Artifact --> Loader[load_hack strict reload]
+    Artifact --> Loader[Python load_hack artifact loader]
     Loader --> Program[LoadedHack for executor]
 ```
 
@@ -48,10 +47,9 @@ Hack 汇编是按行组织的简单语言：没有嵌套表达式、运算符优
 
 - 非法标签与符号；
 - 不存在的 `comp`、`dest`、`jump`；
-- 重复 `.description`、`.hook` 或 `.max_steps`；
+- 重复 `.description` 或 `.max_steps`；
 - 未知点指令；
 - 越界 A 指令、RAM 地址和断言值；
-- 绝对、越界或非 `.sail` Hook 路径。
 
 对教学汇编器而言，明确拒绝错误比猜测用户意图更重要。
 
@@ -87,13 +85,12 @@ ROM[0001] L1 [2/4] SET R0, 6 => D=A
 | `PseudoInstruction` | Hack+ 写法 | 展开后进入 |
 | `AssertionDirective` | `.assert` | 否，进入 metadata |
 | `MaxStepsDirective` | `.max_steps` | 否，进入 metadata |
-| `HookDirective` | `.hook` | 否，进入执行 metadata |
-| `DescriptionDirective` | `.description` | 否，仅供源码发现 |
+| `DescriptionDirective` | `.description` | 否，供 discovery 与 manifest metadata 使用 |
 
 解析优先级是有意安排的：
 
 1. 去掉 `//` 后的注释和首尾空白；
-2. 识别 `.description`、`.assert`、`.max_steps`、`.hook`；
+2. 识别 `.description`、`.assert`、`.max_steps`；
 3. 识别标签；
 4. 识别以 `@` 开头的 A 指令；
 5. 根据首个单词识别 Hack+；
@@ -101,7 +98,7 @@ ROM[0001] L1 [2/4] SET R0, 6 => D=A
 
 点指令必须先于普通指令，否则 `.assert` 或 `.description` 可能得到含糊的“非法 C 指令”错误。以 `@` 开头的内容单独处理，则能把“非法操作数”和“根本不是 A 指令”区分开。
 
-`source_description(text)` 从同一组类型化语句中寻找 `DescriptionDirective`。`expand()` 会丢弃这个节点，而不是把它放入执行 metadata。因此 workflow 能从源码列出程序，而 `.description` 不会序列化到 `.hack` metadata。
+`source_description(text)` 从同一组类型化语句中读取 description，供 workflow discovery 使用。`expand()` 不把 `DescriptionDirective` 放入代码 lowering；`assemble_text()` 将文本复制到 `AssemblyMetadata.description`，随后由 `artifact.py` 序列化为 manifest `description`。它始终不进入 ROM。
 
 ### A 指令验证
 
@@ -250,8 +247,8 @@ MachineWord(value, source, expansion)
 ```python
 halt_addresses: tuple[int, ...]
 assertions: tuple[Assertion, ...]
-max_steps: int | None
-hook_path: str
+max_steps: int
+max_steps_origin: Literal["default", "source", "cli"]
 ```
 
 点指令不增加 ROM 地址。如果删除所有 `.assert`，标准机器字应完全不变；测试套件专门固定了这条性质。
@@ -260,9 +257,8 @@ hook_path: str
 
 汇编器只负责：
 
-- 解析目标、比较符和数值；
-- 决定 `bits`、`signed`、`unsigned` 模式；
-- 检查范围并规范化表示；
+- 使用公共 parser 强制 equality bit-exact，并要求 ordered comparison 显式写 `signed(...)`/`unsigned(...)`；
+- 校验 Hack target 与位宽，再规范化表示；
 - 保存源码行号。
 
 它不读取最终寄存器，也不在 Python 中执行断言。真正的断言表达式由 executor 写入生成的 Sail driver。
@@ -271,19 +267,11 @@ hook_path: str
 
 ## `write_hack()`：把结果变成可审计产物
 
-输出文件包含两种记录。
+`artifact.py` 写出两类记录。
 
-### 结构化 metadata
+### 文件开头的结构化 manifest block
 
-```text
-//%hack format {"version":3}
-//%hack hook {"path":"hooks/default.sail"}
-//%hack halt {"address":12}
-//%hack assert {"line":20,"mode":"bits","operator":"==","target":"R2","value":42}
-//%hack max_steps {"value":1000}
-```
-
-这些记录放在机器字之前，使用固定 JSON 键集合和版本号。
+`write_hack()` 委托公共 renderer。`summary` 和 `full` 在文件开头写入一个连续的多行缩进 canonical S-expression block，每一行都带 `//% ` 前缀；`none` 把同一 form 写成一条带前缀的紧凑行。Schema 是 `verylogic.annotated-image`；公共 envelope 包含 runtime `max_steps`、assertions、completion 与 ISA metadata。Hack 直接汇编省略空 frontend `provenance`。Hack-specific validation 固定 `hack/standard`、source kind `asm`、16 位 word、memory dimensions 与 lowered-self-loop completion。Runtime value 同时记录 `cli`、`source` 或 `default` origin。
 
 ### 带源码映射的机器字
 
@@ -296,15 +284,15 @@ hook_path: str
 
 ### 教学信息级别
 
-可选的 `comments` 参数控制机器字后的解释性注释，不改变机器字和结构化 metadata：
+可选 `comments` 参数控制解释性内容，不改变机器字或语义 metadata；manifest 始终存在，并记录 selected comment level：
 
 | 级别 | 机器字注释 |
 | --- | --- |
-| `none` | 不添加行尾解释 |
+| `none` | 文件开头一条紧凑 manifest 行后直接写机器字；无 human preamble 或行尾解释 |
 | `summary` | 每个机器字都显示 ROM/源码位置和规范化汇编；Hack+ 增加 `[i/n] 源伪指令 => 正式指令`；行内注释放在最右侧 |
 | `full` | summary 信息加精确的完整原始源码文本 |
 
-默认使用 `summary`：普通 A/C 源码和伪指令展开都会显示，行内汇编注释放在最右侧。`//%hack` 是机器可读的执行 metadata，因此所有级别都会保留。可以运行 `pixi run just hack assemble multiply`，也可以用 `pixi run just hack assemble multiply summary --hook hooks/trace.sail --max-steps 10000` 覆盖运行 metadata。CLI 覆盖先经 `apply_runtime_overrides()` 应用，再调用 `write_hack()`，因此 artifact 会记录最终有效值。
+默认使用 `summary`：普通 A/C 源码和伪指令展开都会显示，行内汇编注释放在最右侧。文件开头的 `//%` manifest block 在所有级别都存在。可以运行 `pixi run just hack assemble multiply`，也可以用 `pixi run just hack assemble multiply summary --max-steps 10000` 覆盖 `max_steps`。`apply_runtime_overrides()` 在 `write_hack()` 前按 CLI > source > default 解析，因此最终 value 与 origin 都会穿过 artifact 边界。
 
 ## 为什么还要 `load_hack()`
 
@@ -318,20 +306,18 @@ executor 不直接使用内存中的 `AssemblyResult`。它先调用 `write_hack
 
 如果不重新加载，writer 忘记保存某项 metadata 时，运行仍可能从内存对象中“碰巧成功”，磁盘产物却不完整。重新加载迫使执行只依赖真正交付的文件。
 
-### loader 的严格规则
+### Python artifact loader 的严格规则
 
-`load_hack()` 会检查：
+这里的 loader 是 `isa/hack/tools/artifact.py::load_hack()`。它会检查：
 
-- 每个机器字恰好 16 位且只含 `0/1`；
-- metadata 必须出现在机器字之前；
-- 非 `format` metadata 之前必须有唯一的 `format version=3`；
-- JSON 不允许重复键、遗漏键或额外键；
-- Hook 路径必须是规范化的包内相对 `.sail` 路径；
-- HALT、断言和步数值必须类型正确且范围合法；
-- 记录的 HALT 地址必须真的指向 `@address; 0;JMP` 自循环；
-- ROM 不能超过 32768 个机器字。
+- 文件开头恰好有一个连续 manifest block，格式符合 comment level，并具有公共 version-1 精确键集合；
+- ISA/profile、source identity、description、comment level、runtime value/origin、assertions、completion 与 `isa_metadata` 类型和值合法；
+- equality assertion 使用无 wrapper 的 `bits` mode，ordered assertion 使用显式 `signed` 或 `unsigned` mode；
+- 每个机器字恰好 16 位且只含 `0/1`，注释是否存在符合 manifest level；
+- completion address 真实指向 `@address; 0;JMP` 自循环；
+- ROM 不超过 32768 个机器字。
 
-普通、不带 metadata 的 `.hack` 仍然可以加载；它会使用默认 Hook，且没有断言和 HALT 地址。
+`load_hack()` 只接受严格带注释格式，没有文件开头 manifest block 的文件会被拒绝。未来若增加原始 nand2tetris `.hack` 互操作，必须使用独立显式 frontend，因为 raw image 无法如实提供 description、assertions、watchdog 来源或 completion metadata。
 
 ## 错误设计
 
@@ -347,20 +333,28 @@ executor 不直接使用内存中的 `AssemblyResult`。它先调用 `write_hack
 ## 函数调用地图
 
 ```text
-CLI main
-├── assemble(source)
-│   └── assemble_text(text)
-│       ├── parse(text)
-│       │   └── Parser.parse
-│       ├── expand(statements)
-│       ├── pass 1: labels
-│       └── pass 2: symbols + encode
-├── apply_runtime_overrides(result)
-└── write_hack(result, output)
+assembler_cli.py
+├── assembler.assemble(source)
+├── artifact.apply_runtime_overrides(result)
+└── artifact.write_hack(result, output)
 
-executor
+assembler.py
+└── assemble(source)
+    └── assemble_text(text)
+        ├── parse(text)
+        │   └── Parser.parse
+        ├── expand(statements)
+        ├── pass 1: labels
+        └── pass 2: symbols + encode
+
+artifact.py
+├── apply_runtime_overrides(result)
+├── write_hack(result, output)
 └── load_hack(output)
-    └── LoadedHack(words, metadata)
+    └── LoadedHack(words, metadata, word_comments, manifest)
+
+executor.py
+└── strict reload → driver generation
 ```
 
 关键函数阅读顺序：

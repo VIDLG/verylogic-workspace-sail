@@ -65,11 +65,11 @@ pixi run just hack run multiply full
 最佳选择取决于实验是否需要和标准 Hack **长期共存**：
 
 - **个人分支或课程练习**：可以直接修改 `isa/hack/`。这是最短、最容易观察完整影响面的路径；实验前建立分支，标准回归测试作为兼容性基线。
-- **仍生成标准 Hack 机器码的工具改进**：可以在原模块中实现，例如新伪指令、trace 或更好的诊断。默认行为应保持兼容；实验性行为通过显式语法、Hook 或参数启用。
-- **平台实验**：优先使用独立 Hook、driver 选项或命名 recipe，使同一标准 ISA 可以运行在不同教学环境中。只有平台成为长期稳定产品时，才考虑独立包。
+- **仍生成标准 Hack 机器码的工具改进**：可以在原模块中实现，例如新伪指令、trace 或更好的诊断。默认行为应保持兼容；实验性行为通过显式语法、driver 选项或命名 recipe 启用。
+- **平台实验**：优先使用 driver 选项或命名 recipe，使同一标准 ISA 可以运行在不同教学环境中。只有平台成为长期稳定产品时，才考虑独立包。
 - **要提交并长期保留的真正 ISA 变化**：不要静默改写 `isa/hack/hack.sail` 的 nand2tetris 含义。给机器起名，例如 `HackShift` 或 `Hack32`，并建立 sibling 模块（如 `isa/hack32/`），拥有自己的 Sail 模型、assembler、programs、tests、README、产物 identity 和根级命令。
 
-当前标准 Hack 只有一个小型 Sail 文件，因此不为了尚未出现的变体预先复制 RISC-V 的 profile registry。等到仓库里确实出现两个以上需要长期共存、共享大量稳定实现的 Hack 派生机器，再从真实重复中提取公共 assembler 或 executor helper；不要先做一个抽象框架，再要求每个学生实验适配它。
+标准 Hack 有意由一个小型 Sail 文件表示；工作区不为不存在的变体增加 profile registry。若两个以上需要长期共存的 Hack 派生机器确实共享大量稳定实现，再从真实重复中提取公共 assembler 或 executor helper；不要先做抽象框架，再要求每个学生实验适配它。
 
 换句话说：**练习可以原地做，标准主线不能被无声改名，长期变体必须有身份。** 即使新机器保持旧机器字兼容，也应在 metadata、命令、文档和测试报告中显示自己的名称，避免标准 Hack 与派生 ISA 的结果互相冒充。
 
@@ -94,7 +94,7 @@ POP target
 
 可以尝试：
 
-- 用 Hook 追踪 `PC`、解码指令和发生变化的状态；
+- 用 driver trace 记录 `PC`、解码指令和发生变化的状态；
 - 在 driver 中实现 breakpoint 或 watchpoint；
 - 编写 `.hack` 反汇编器，输出规范 A/C 语法；
 - 生成逐步 HTML trace，把源码、ROM 机器字和状态转换连起来；
@@ -152,7 +152,7 @@ POP target
 | --- | --- |
 | Hack+ 伪指令 | `assembler.py` parser/lowering、展开测试、示例、包参考 |
 | 产物解释 | writer/loader 契约、driver 注释传播、comment-level 测试、文档 |
-| 执行观察能力 | Hook 或 executor/driver、确定性测试、执行文档 |
+| 执行观察能力 | executor/driver、确定性测试、执行文档 |
 | Memory-mapped device | 平台状态与读写语义、driver 输入输出、Sail 与端到端测试 |
 | 新编码指令 | `hack.sail` decode/execute、assembler 编码、独立 known words、一致性与集成测试、ISA 指南 |
 | VM-to-Hack 等新前端 | 独立 translator、规范 `.asm` 边界、源码来源、translator 与端到端测试 |

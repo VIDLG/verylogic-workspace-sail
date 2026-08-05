@@ -1,8 +1,8 @@
 # Hack Assembler Internals
 
-[← Hack ISA](/hack/isa) · [Hack overview](/hack/) · [中文](/zh/hack/assembler) · [Execution and tests →](/hack/execution)
+[← Hack ISA](/hack/isa) · [Common teaching contract](/reference/teaching-contract) · [中文](/zh/hack/assembler) · [Execution and tests →](/hack/execution)
 
-This guide follows [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) and explains how a small but complete assembler turns `.asm` source into 16-bit Hack machine code. It is not an API listing; it is a guided study of compiler phases and why they occur in this order.
+This guide follows [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) and [`artifact.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/artifact.py). It explains how source becomes 16-bit Hack machine code, then crosses a strict persisted-artifact boundary. Shared directive and manifest rules are defined by the [common teaching contract](/reference/teaching-contract). `assembler.py` remains a pure library; `assembler_cli.py` is the thin CLI boundary that handles arguments and publication.
 
 ## The assembler's responsibility
 
@@ -18,13 +18,12 @@ D=M                   // standard C instruction
 .max_steps 1000
 ```
 
-Parsed source has three destinations:
+Parsed source has two destinations:
 
 1. `records`: real `MachineWord` values that enter ROM;
-2. execution `metadata`: HALT addresses, assertions, a step limit, and a hook path;
-3. source-only `.description`, exposed to workflow but discarded before `AssemblyResult` construction.
+2. `AssemblyMetadata`: HALT addresses, assertions, effective runtime settings with origins, source identity, and `.description`.
 
-This split prevents `.assert` and similar test facilities from pretending to be Hack instructions, while keeping discovery text out of the executable `.hack` contract.
+Workflow reads the description through the same parser for program discovery. `artifact.py` serializes it into the `.hack` manifest, while directives still emit no ROM word. This keeps teaching metadata observable without pretending that it is Hack code.
 
 ```mermaid
 flowchart TD
@@ -36,7 +35,7 @@ flowchart TD
     Pass2 --> Result[AssemblyResult]
     Result --> Writer[write_hack]
     Writer --> Artifact[annotated .hack]
-    Artifact --> Loader[load_hack strict reload]
+    Artifact --> Loader[Python load_hack artifact loader]
     Loader --> Program[LoadedHack for executor]
 ```
 
@@ -48,10 +47,9 @@ Simple does not mean permissive. The parser rejects:
 
 - malformed labels and symbols;
 - unknown `comp`, `dest`, and `jump` forms;
-- duplicate `.description`, `.hook`, or `.max_steps` directives;
+- duplicate `.description` or `.max_steps` directives;
 - unknown dot directives;
 - out-of-range A operands, RAM targets, and assertion values;
-- absolute, escaping, or non-`.sail` hook paths.
 
 For an educational assembler, explicit rejection is better than guessing the author's intent.
 
@@ -87,13 +85,12 @@ This is a useful compiler principle: **source locations belong in the IR; do not
 | `PseudoInstruction` | Hack+ form | After lowering |
 | `AssertionDirective` | `.assert` | No; metadata |
 | `MaxStepsDirective` | `.max_steps` | No; metadata |
-| `HookDirective` | `.hook` | No; execution metadata |
-| `DescriptionDirective` | `.description` | No; source discovery only |
+| `DescriptionDirective` | `.description` | No; discovery and manifest metadata |
 
 The parser dispatch order is deliberate:
 
 1. remove text after `//` and trim whitespace;
-2. recognize `.description`, `.assert`, `.max_steps`, and `.hook`;
+2. recognize `.description`, `.assert`, and `.max_steps`;
 3. recognize labels;
 4. recognize A instructions beginning with `@`;
 5. use the first word to recognize Hack+;
@@ -101,7 +98,7 @@ The parser dispatch order is deliberate:
 
 Dot directives come first so an invalid `.assert` or `.description` gets a directive-specific error rather than an ambiguous “bad C instruction.” Handling `@` separately similarly distinguishes an invalid operand from a non-A instruction.
 
-`source_description(text)` scans the same typed statements for `DescriptionDirective`. During `expand()`, that node is discarded rather than copied into execution metadata. Workflow can therefore list programs from source, while `.description` is not serialized into `.hack` metadata.
+`source_description(text)` scans the same typed statements for workflow discovery. `expand()` omits `DescriptionDirective` from code lowering, and `assemble_text()` copies its text into `AssemblyMetadata.description`. `artifact.py` then serializes that value as manifest `description`; it never enters ROM.
 
 ### A-instruction validation
 
@@ -250,8 +247,8 @@ For ordinary A/C instructions, `expansion` is `None`. For Hack+ output, it is a 
 ```python
 halt_addresses: tuple[int, ...]
 assertions: tuple[Assertion, ...]
-max_steps: int | None
-hook_path: str
+max_steps: int
+max_steps_origin: Literal["default", "source", "cli"]
 ```
 
 Directives do not advance ROM. Removing all `.assert` lines must leave every standard machine word unchanged; the test suite explicitly fixes this property.
@@ -260,9 +257,8 @@ Directives do not advance ROM. Removing all `.assert` lines must leave every sta
 
 The assembler only:
 
-- parses the target, operator, and value;
-- chooses `bits`, `signed`, or `unsigned` mode;
-- validates ranges and canonicalizes representation;
+- uses the public parser to enforce bit-exact equality and explicit `signed(...)`/`unsigned(...)` ordered comparisons;
+- validates Hack targets and widths, then canonicalizes representation;
 - retains the source line.
 
 It never reads final registers or evaluates assertions in Python. The executor turns metadata into Sail assertions inside the generated driver.
@@ -271,19 +267,11 @@ That separation is intentional: Python translates; Sail executes and judges arch
 
 ## `write_hack()`: an auditable artifact
 
-The output contains two record classes.
+`artifact.py` writes two record classes.
 
-### Structured metadata
+### Opening structured manifest block
 
-```text
-//%hack format {"version":3}
-//%hack hook {"path":"hooks/default.sail"}
-//%hack halt {"address":12}
-//%hack assert {"line":20,"mode":"bits","operator":"==","target":"R2","value":42}
-//%hack max_steps {"value":1000}
-```
-
-Metadata precedes words and uses a versioned, fixed-key JSON schema.
+`write_hack()` delegates to the shared renderer. At `summary` and `full`, it writes one indented canonical S-expression as a contiguous block at the start of the file, with every line prefixed by `//% `. At `none`, it writes the same form as one compact prefixed line. The schema is `verylogic.annotated-image`; the public envelope contains runtime `max_steps`, assertions, completion, and ISA metadata. Hack direct assembly omits empty frontend `provenance`. Hack-specific validation fixes `hack/standard`, source kind `asm`, 16-bit words, memory dimensions, and lowered-self-loop completion. Runtime values carry `cli`, `source`, or `default` origins.
 
 ### Source-mapped machine words
 
@@ -296,15 +284,15 @@ The line still begins with a normal 16-bit Hack word. Simple tools can ignore co
 
 ### Teaching detail levels
 
-The optional `comments` argument controls explanatory word comments without changing machine words or structured metadata:
+The optional `comments` argument controls explanatory content without changing machine words or semantic metadata. The manifest is always present and records the selected comment level:
 
 | Level | Word annotation |
 | --- | --- |
-| `none` | No trailing explanation |
+| `none` | One compact opening manifest line followed by words; no human preamble or trailing explanation |
 | `summary` | ROM/source location and normalized assembly for every word; Hack+ adds `[i/n] source => canonical`; inline comments stay at the far right |
 | `full` | Summary information plus the exact complete original source text |
 
-`summary` is the default. It shows ordinary A/C source as well as pseudoinstruction lowering, with any inline assembly comment at the far right. `//%hack` records are machine-readable execution metadata, so they are written at every level. Run `pixi run just hack assemble multiply`, or override runtime metadata with `pixi run just hack assemble multiply summary --hook hooks/trace.sail --max-steps 10000`. CLI overrides are applied by `apply_runtime_overrides()` before `write_hack()`, so the artifact records the effective values.
+`summary` is the default. It shows ordinary A/C source as well as pseudoinstruction lowering, with inline assembly comments at the far right. The opening `//%` manifest block is written at every level. Run `pixi run just hack assemble multiply`, or override `max_steps` with `pixi run just hack assemble multiply summary --max-steps 10000`. `apply_runtime_overrides()` resolves CLI over source/default before `write_hack()`, so both each effective value and its origin cross the artifact boundary.
 
 ## Why `load_hack()` exists
 
@@ -318,20 +306,18 @@ assembler internals --write--> .hack artifact --strict load--> executor input
 
 Without reload, a writer bug could omit metadata while execution still “worked” from the old in-memory object. Reload ensures execution depends only on the artifact actually delivered to disk.
 
-### Strict loader rules
+### Strict Python artifact-loader rules
 
-`load_hack()` verifies:
+The loader here is `isa/hack/tools/artifact.py::load_hack()`. It verifies:
 
-- each word is exactly 16 binary digits;
-- metadata appears before machine words;
-- non-`format` records follow one `format version=3` record;
-- JSON has no duplicate, missing, or additional keys;
-- hook paths are normalized package-relative `.sail` paths;
-- HALT, assertion, and step values have exact types and legal ranges;
-- each HALT address actually points at an `@address; 0;JMP` self-loop;
+- exactly one contiguous manifest block appears at the start of the file, uses the comment-level-specific formatting, and has the exact common version-1 key set;
+- ISA/profile, source identity, description, comment level, runtime value/origin, assertions, completion, and `isa_metadata` have exact types and legal values;
+- equality assertions use `bits` mode with no wrapper, while ordered assertions use explicit `signed` or `unsigned` mode;
+- each machine word is exactly 16 binary digits and comment presence matches the manifest level;
+- each completion address points at an `@address; 0;JMP` self-loop;
 - ROM has at most 32768 words.
 
-A plain `.hack` file without metadata remains loadable. It receives the default hook and has no assertions or known HALT addresses.
+`load_hack()` accepts only the strict annotated format and rejects a file without an opening manifest block. If raw nand2tetris `.hack` interoperability is added later, it must be a separate explicit frontend because a raw image cannot truthfully supply descriptions, assertions, watchdog origin, or completion metadata.
 
 ## Error design
 
@@ -347,20 +333,28 @@ Collapsing both into “assembly failed” would hide which boundary broke.
 ## Call map
 
 ```text
-CLI main
-├── assemble(source)
-│   └── assemble_text(text)
-│       ├── parse(text)
-│       │   └── Parser.parse
-│       ├── expand(statements)
-│       ├── pass 1: labels
-│       └── pass 2: symbols + encode
-├── apply_runtime_overrides(result)
-└── write_hack(result, output)
+assembler_cli.py
+├── assembler.assemble(source)
+├── artifact.apply_runtime_overrides(result)
+└── artifact.write_hack(result, output)
 
-executor
+assembler.py
+└── assemble(source)
+    └── assemble_text(text)
+        ├── parse(text)
+        │   └── Parser.parse
+        ├── expand(statements)
+        ├── pass 1: labels
+        └── pass 2: symbols + encode
+
+artifact.py
+├── apply_runtime_overrides(result)
+├── write_hack(result, output)
 └── load_hack(output)
-    └── LoadedHack(words, metadata)
+    └── LoadedHack(words, metadata, word_comments, manifest)
+
+executor.py
+└── strict reload → driver generation
 ```
 
 Recommended function reading order:

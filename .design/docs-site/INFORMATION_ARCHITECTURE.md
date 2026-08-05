@@ -90,7 +90,7 @@ The primary reading view—the place readers are expected to spend most of their
 ### Execution and tests
 
 1. Follow machine code into a generated Sail driver.
-2. Explain completion, bounds, assertions, and hooks.
+2. Explain completion, bounds, assertions, and output.
 3. Explain Sail-to-C compilation.
 4. Explain workflow and regression-test layers.
 
@@ -124,11 +124,11 @@ The primary reading view—the place readers are expected to spend most of their
 3. Reader follows assembler lowering into real A/C instructions.
 4. Reader follows execution into Sail assertions and tests.
 
-### Inspect generated teaching artifacts
+### Inspect generated annotated artifacts
 
 1. Learner runs `pixi run just hack assemble multiply` to correlate source lines and Hack+ expansion positions with ROM addresses.
-2. Learner runs `pixi run just hack run multiply full` to generate and execute the complete teaching artifact set.
-3. Learner compares matching per-ROM comments in `.hack` and `.driver.sail`.
+2. Learner runs `pixi run just hack run multiply full` to generate and execute the complete annotated artifact set.
+3. Learner compares each annotated machine word in `.hack` with the matching raw `ROM[index] = word` load line in `.driver.sail`.
 4. Learner follows the Toolchain internals section when ready to understand how those comments cross the file boundary.
 
 ### Evolve the machine
@@ -147,12 +147,12 @@ The primary reading view—the place readers are expected to spend most of their
 
 ### Add another ISA
 
-1. Maintainer reads the root workspace convention.
+1. Maintainer reads the root [`AGENTS.md`](../../AGENTS.md) and shared [Sail modeling conventions](../SAIL_MODELING.md).
 2. Maintainer creates `isa/<name>/` with its own workflow.
 3. Maintainer adds matching `/<name>/` and `/zh/<name>/` documentation.
 4. Maintainer adds the module to site navigation and aggregate commands.
 
-## Naming Conventions
+## Documentation Naming Conventions
 
 | Concept | Label | Notes |
 | --- | --- | --- |
@@ -167,6 +167,10 @@ The primary reading view—the place readers are expected to spend most of their
 | Machine-code runner | executor | Preserve the implementation's term |
 | Extended assembly syntax | Hack+ pseudoinstruction | Never call it part of the Hack ISA |
 
+## Sail Modeling Conventions
+
+Repository-wide Sail naming, typed-field, explicit decode/encode, and illegal-encoding rules live in [`.design/SAIL_MODELING.md`](../SAIL_MODELING.md). ISA documentation should link or summarize architecture-specific consequences without copying the full maintenance contract into every subtree.
+
 ## Component Reuse Map
 
 | Component | Used on | Behavior differences |
@@ -180,7 +184,7 @@ The primary reading view—the place readers are expected to spend most of their
 
 ## Content Growth Plan
 
-- Cross-ISA concepts and workspace-wide technology choices live directly under `site/docs/<locale>/`; they must not be duplicated into every ISA subtree.
+- Cross-ISA concepts and workspace-wide technology choices live directly under `site/docs/<locale>/`; they must not be duplicated into every ISA subtree. Internal model-maintenance rules remain canonical in `.design/SAIL_MODELING.md`.
 - Each new ISA receives one parallel `site/docs/<locale>/<isa>/` subtree.
 - Start with overview, tutorial, and ISA; add tool-specific pages only when that ISA has those tools.
 - Keep article depth flat beneath each ISA. Split an article only when it has an independent reader task and stable navigation label.

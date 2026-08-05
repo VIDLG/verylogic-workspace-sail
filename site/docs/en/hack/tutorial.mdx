@@ -109,7 +109,7 @@ D=M
 D;JEQ
 ```
 
-Pseudoinstructions are therefore assembly conveniences, not additions to the ISA modeled in Sail. See [How Hack+ lowers to real instructions](/hack/isa#how-hack-lowers-to-real-instructions) for every expansion and its register side effects. `.description` is used only for workflow discovery and does not enter machine code or execution metadata.
+Pseudoinstructions are therefore assembly conveniences, not additions to the ISA modeled in Sail. See [How Hack+ lowers to real instructions](/hack/isa#how-hack-lowers-to-real-instructions) for every expansion and its register side effects. `.description` emits no machine word: workflow uses it for discovery, and `artifact.py` preserves it as the annotated machine image manifest description.
 
 ### 3. Observe `.assert` success and failure
 
@@ -135,7 +135,7 @@ If it is deliberately changed to `.assert R2 == 43`, the core diagnostic is simi
 Assertion failed: assertion R2 == 0x002B from source line 20 failed
 ```
 
-The generated program then exits with status `1`, failing `run` or `test`. The diagnostic points to the original `.asm` line. Python workflow does not compare printed text; the actual judgment happens inside Sail. See [Using `.assert`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md#using-assert) for bit-exact, signed, unsigned, and PC rules.
+The generated program then exits with status `1`, failing `run` or `test`. The diagnostic points to the original `.asm` line. Python workflow does not compare printed text; the actual judgment happens inside Sail. See the [common teaching contract](/reference/teaching-contract#assertion-syntax-and-interpretation) for shared equality/ordering syntax and [Execution and tests](/hack/execution#turning-source-assertions-into-sail) for Hack targets.
 
 ### 4. Inspect the real machine code
 
@@ -253,9 +253,9 @@ programs/*.asm
   │  two-pass assembly and Hack+ expansion
   ▼
 .build/<program>.hack
-  │  reload words, assertions, hook, and HALT metadata
+  │  reload words, assertions, and HALT metadata
   ▼
-generated .driver.sail + hack.sail + hook
+generated .driver.sail + hack.sail
   │  Sail type checking and C backend
   ▼
 .build/<program>.exe
@@ -275,7 +275,7 @@ Important components:
 - [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail): direct ALU, jump, destination, and transition checks;
 - `isa/hack/tests/`: Python tests for the assembler and executor.
 
-For the complete assertion, hook, pseudoinstruction, and annotated-file syntax, see the [Hack package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md).
+For the complete assertion, `max_steps`, pseudoinstruction, and annotated-file syntax, see the [Hack package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md).
 
 ## Suggested exercises
 
@@ -291,7 +291,7 @@ For the complete assertion, hook, pseudoinstruction, and annotated-file syntax, 
 Add an assertion to `test_alu()` in [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail), then run:
 
 ```sh
-pixi run just hack run isa_conformance
+pixi run just hack test
 ```
 
 These tests call the Sail functions directly; Python does not simulate the ISA.
@@ -303,18 +303,6 @@ These tests call the Sail functions directly; Python does not simulate the ISA.
 3. Put at least one `.assert` directive beside the source.
 4. Run `pixi run just hack run <name>`.
 5. Run `pixi run just hack test` for the complete package regression.
-
-### Add tracing or a device model
-
-Select a package-local Sail hook from assembly:
-
-```asm
-.hook hooks/trace.sail
-```
-
-Hooks run in the same Sail/C process and can inspect or update `A`, `D`, `PC`, and `RAM`. Start with [`isa/hack/hooks/trace.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hooks/trace.sail) and extend it with per-step tracing, coverage counters, or simple devices.
-
-
 
 ## Scope and limitations
 

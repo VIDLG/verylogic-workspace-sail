@@ -27,7 +27,7 @@ A successful program ends with `ASSERT PASS` and a dump of architectural state. 
 | registers, memory, instruction bits, ALU operations, and jumps | [ISA guide](/hack/isa) |
 | how to add pseudoinstructions, tools, devices, or real ISA extensions | [Evolve Hack](/hack/evolution) |
 | symbols, Hack+ lowering, two-pass assembly, and `.hack` output | [Assembler internals](/hack/assembler) |
-| generated drivers, Sail's C backend, assertions, hooks, and tests | [Execution and tests](/hack/execution) |
+| generated drivers, Sail's C backend, assertions, and tests | [Execution and tests](/hack/execution) |
 | exact commands, directives, and artifact comment levels | [Package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md) |
 
 ## One program, end to end
@@ -38,7 +38,7 @@ flowchart TD
     Assembler --> Machine[annotated .hack]
     Machine --> Executor[executor.py]
     Executor --> Driver[annotated driver.sail]
-    Driver --> Sail[hack.sail + hook]
+    Driver --> Sail[hack.sail]
     Sail --> C[Sail C backend]
     C --> Native[native executable]
     Native --> Assertions[Sail assertions]

@@ -12,18 +12,24 @@ Sail 位于架构手册与处理器实现之间：它让指令语义可以执行
 
 [比较 Sail 与自然语言、C/C++、Verilog/SystemVerilog 和证明助理 →](/zh/why-sail)
 
+## 公共教学契约
+
+ISA 模块共享源码 directive、bit-exact/ordered assertion 规则、文件开头的带注释机器映像 manifest block、运行配置覆盖优先级、comment level、strict reload 与 staged publication。
+
+[阅读公共教学契约 →](/zh/reference/teaching-contract)
+
 ## ISA 模块
 
 ### Hack
 
-nand2tetris 使用的 16 位教学计算机。本仓库用 Sail 建模，并提供汇编器、可运行程序、源码断言、Hook 和端到端测试。
+nand2tetris 使用的 16 位教学计算机。本仓库用 Sail 建模，并提供汇编器、可运行程序、源码断言和端到端测试。
 
 - [进入 Hack 概览 →](/zh/hack/)
 - [打开 Hack 包参考 →](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md)
 
 ## 一个 ISA 模块怎样组织
 
-每个模块从概览和教程开始，随后进入 ISA 指南；实现细节较多的 assembler 和 executor 文档统一放在**工具链内部原理**分组。某个 ISA 没有对应工具时，可以省略不适用的页面。
+每个模块从概览和教程开始，随后进入 ISA 指南；实现细节较多的 assembler 和 executor 文档统一放在**工具链内部原理**分组。[公共教学契约](/zh/reference/teaching-contract)定义共享 source/artifact 行为；ISA 页面重点说明 target 语法、编码、完成条件与模型语义。
 
 ## 仓库设置
 

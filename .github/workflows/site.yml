@@ -6,6 +6,10 @@ on:
     paths:
       - ".github/workflows/site.yml"
       - "site/**"
+  pull_request:
+    paths:
+      - ".github/workflows/site.yml"
+      - "site/**"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +18,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: site-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -54,6 +58,7 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:

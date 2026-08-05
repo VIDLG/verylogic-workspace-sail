@@ -2,7 +2,7 @@
 
 [← Tutorial](/hack/tutorial) · [Hack overview](/hack/) · [中文](/zh/hack/isa) · [Assembler internals →](/hack/assembler)
 
-This document focuses on the **Hack ISA itself**: the state visible to software, machine-instruction encodings, and the state transition caused by each instruction. See the [Hack package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md) for commands, hooks, assertions, and annotated `.hack` metadata.
+This document focuses on the **Hack ISA itself**: the state visible to software, machine-instruction encodings, and the state transition caused by each instruction. See the [Hack package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md) for commands, assertions, and annotated `.hack` metadata.
 
 ## What an ISA is
 
@@ -23,7 +23,7 @@ The layers used by this project are distinct:
 | Standard Hack assembly | `@2`, `M=D`, `D;JGT` | Textual representation of machine instructions |
 | Labels and symbols | `(LOOP)`, `@R0`, `@variable` | Assembler syntax, not CPU instructions |
 | Hack+ pseudoinstruction | `SET`, `JEQ target,label`, `HALT` | Project-specific assembler convenience, not ISA |
-| Test directive | `.assert`, `.hook`, `.max_steps` | Execution metadata; never enters ROM |
+| Test directive | `.assert`, `.max_steps` | Execution metadata; never enters ROM |
 | Sail model | `hack.sail` | Executable description of the ISA semantics |
 
 Only 16-bit A or C instructions ultimately reach the Hack CPU.
@@ -360,7 +360,7 @@ Keep the complete Hack platform separate from this executable model when interpr
 
 - ROM is declared in `hack.sail`; the generated driver initializes its raw words, while `fetch_hack` and `hack_step` own instruction fetch and dispatch.
 - RAM has no Screen or Keyboard device side effects.
-- `HALT`, Hack+, `.assert`, `.hook`, and `.max_steps` belong to the tool layer, not the Hack ISA.
+- `HALT`, Hack+, `.assert`, and `.max_steps` belong to the tool layer, not the Hack ISA.
 - The model specifies architectural transitions, not gate delays, clock-edge details, or nand2tetris HDL.
 - Execution uses Sail's C backend and makes no claim of a completed formal equivalence proof.
 

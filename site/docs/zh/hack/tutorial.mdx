@@ -117,7 +117,7 @@ D=M
 D;JEQ
 ```
 
-所以伪指令只是汇编层的便捷写法，不会扩展 Sail 中定义的 ISA。全部展开规则及其对 `A`、`D` 的影响见 [Hack ISA 详解：Hack+ 如何降级](/zh/hack/isa#hack-如何降级为正式指令)。`.description` 只供 workflow 自动列出程序，不进入机器码或执行 metadata。
+所以伪指令只是汇编层的便捷写法，不会扩展 Sail 中定义的 ISA。全部展开规则及其对 `A`、`D` 的影响见 [Hack ISA 详解：Hack+ 如何降级](/zh/hack/isa#hack-如何降级为正式指令)。`.description` 不产生机器字：workflow 用它发现程序，`artifact.py` 将它保存在带注释机器映像 manifest 的 description 字段。
 
 ### 3. 观察 `.assert` 成功与失败
 
@@ -143,7 +143,7 @@ R2 = 0x002A
 Assertion failed: assertion R2 == 0x002B from source line 20 failed
 ```
 
-生成程序随后以状态 `1` 退出，`run` 或 `test` 失败。错误指向原始 `.asm` 行号；Python workflow 不比较打印文本，真正判定发生在 Sail 中。位精确、有符号、无符号和 PC 断言的完整规则见 [Hack 包参考手册：`.assert` 怎样使用](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md#assert-怎样使用)。
+生成程序随后以状态 `1` 退出，`run` 或 `test` 失败。错误指向原始 `.asm` 行号；Python workflow 不比较打印文本，真正判定发生在 Sail 中。共享 equality/ordered 语法见[公共教学契约](/zh/reference/teaching-contract#断言语法与解释)，Hack target 见[执行器与测试](/zh/hack/execution#源码断言怎样变成-sail)。
 
 ### 4. 查看真正执行的机器码
 
@@ -271,7 +271,7 @@ programs/*.asm
 .build/<program>.hack
   │  重新加载机器字、断言和 HALT 元数据
   ▼
-生成的 .driver.sail + hack.sail + hook
+生成的 .driver.sail + hack.sail
   │  Sail 类型检查与 C 后端
   ▼
 .build/<program>.exe
@@ -305,7 +305,7 @@ programs/*.asm
 在 [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail) 的 `test_alu()` 中增加断言，然后运行：
 
 ```sh
-pixi run just hack run isa_conformance
+pixi run just hack test
 ```
 
 这里的测试直接调用 Sail 函数，不经过 Python 模拟 ISA。
@@ -326,20 +326,6 @@ pixi run just hack run isa_conformance
 .assert unsigned(R6) > 0x8000
 .assert RAM[100] != 0
 ```
-
-### 实验四：观察每次执行
-
-在汇编源码中加入：
-
-```asm
-.hook hooks/trace.sail
-```
-
-Hook 与生成的执行程序处于同一 Sail/C 进程，可读取或修改 `A`、`D`、`PC` 和 `RAM`。可基于 [`isa/hack/hooks/trace.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hooks/trace.sail) 编写逐指令 trace、覆盖率计数器或简单设备模型。
-
-Hook、`.assert`、`.max_steps`、Hack+ 和带注释 `.hack` 的完整规则见 [Hack 包参考手册](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md)。
-
-
 
 ## 项目边界
 

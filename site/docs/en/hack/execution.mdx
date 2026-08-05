@@ -1,6 +1,6 @@
 # Hack Execution and Test Workflow
 
-[← Assembler internals](/hack/assembler) · [Hack overview](/hack/) · [中文](/zh/hack/execution)
+[← Assembler internals](/hack/assembler) · [Common teaching contract](/reference/teaching-contract) · [中文](/zh/hack/execution)
 
 This guide follows [`executor.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/executor.py) and [`workflow.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/workflow.py) to explain how Hack machine code becomes a native executable through Sail's C backend, and how unit, ISA conformance, and assembly integration tests form one regression loop.
 
@@ -9,7 +9,8 @@ This guide follows [`executor.py`](https://github.com/VIDLG/verylogic-workspace-
 | File | Responsible for | Not responsible for |
 | --- | --- | --- |
 | `hack.sail` | ROM storage, raw-word fetch, A/C decode, typed `hack_step()`, ALU, registers, RAM, and PC transitions | Loading a particular program image, a program-specific `main()`, test program discovery |
-| `executor.py` | Program driver generation, raw ROM loading, run control, Sail/C compilation, assertions, and output | A/C decoding, program discovery, and batch-test policy |
+| `artifact.py` | Runtime override serialization, opening manifest-block creation, atomic `.hack` writing, strict loading, and Hack-specific manifest/completion validation | Instruction parsing, driver policy, or model semantics |
+| `executor.py` | Staged driver generation, raw ROM loading, run control, Sail/C compilation, assertions, execution, and closure publication | A/C decoding, program discovery, and batch-test policy |
 | `workflow.py` | Source discovery and `check/assemble/run/test/clean` orchestration | ISA semantics and judging machine state itself |
 
 This split keeps `hack.sail` reusable as an ISA model. Running another Hack program requires another generated ROM loader and driver, not a change to fetch, decode, or CPU semantics.
@@ -26,7 +27,7 @@ flowchart TD
     Sail --> C[generated .c and .h]
     C --> Compiler[GCC or MinGW + Sail runtime + GMP]
     Compiler --> Native[native executable]
-    Native --> Result[ROM load + hooks + hack_step loop + Sail assertions]
+    Native --> Result[ROM load + hack_step loop + Sail assertions]
 ```
 
 ## Why `hack.sail` has no `main()`
@@ -35,7 +36,6 @@ The ISA owns the architectural ROM and answers how one step fetches a raw word, 
 
 - which raw machine words to load into ROM;
 - when execution is complete;
-- which hooks run around each step;
 - which final assertions to check;
 - which state to print.
 
@@ -48,28 +48,26 @@ This resembles a real system boundary: a CPU model defines storage, fetch, decod
 ```text
 1. Validate CLI arguments
 2. assemble(program) into AssemblyResult
-3. Resolve effective CLI/source `max_steps` and Hook settings
-4. Apply CLI overrides to assembly metadata
-5. Enforce assertion and ROM-size preconditions
-6. Remove stale artifacts with the same prefix
-7. write_hack() to <output>.hack
-8. Strictly reload it with load_hack()
-9. write_driver() to <output>.driver.sail
-10. Resolve the package-local hook from reloaded metadata
-11. Generate C with Sail
-12. Link with a C compiler, Sail runtime, and GMP
-13. Run the native executable
+3. Resolve effective `max_steps` with CLI > source > default
+4. Enforce assertion and ROM-size preconditions
+5. Create a temporary sibling staging directory
+6. write_hack() to the staged <output>.hack
+7. Strictly reload it with load_hack()
+8. Generate the staged <output>.driver.sail from LoadedHack
+9. Generate staged C/header with Sail
+10. Link the staged native executable with Sail runtime and GMP
+11. Run the staged executable and its Sail assertions
+12. Publish the complete staged closure to the final paths
 ```
 
-Steps 7 and 8 are the important design boundary. Effective CLI overrides are first serialized into `.hack`; the executor does not pass an in-memory assembly object straight to driver generation. See [Why `load_hack()` exists](/hack/assembler#why-load_hack-exists).
+Steps 6 and 7 are the persisted trust boundary: effective CLI overrides are serialized into `.hack` before driver generation. Step 12 is the publication boundary: final names change only after staged execution succeeds. See [Why `load_hack()` exists](/hack/assembler#why-load_hack-exists) and the [common publication contract](/reference/teaching-contract#staging-and-publication).
 
 ### Which settings belong on which surface
 
 | Concern | Source | CLI | Reason |
 | --- | --- | --- | --- |
-| Hook | `.hook` | `--hook` | Per-run runtime strategy |
 | Step budget | `.max_steps` | `--max-steps` | Per-run runtime strategy |
-| Description | `.description` | None | Source identity for discovery |
+| Description | `.description` | None | Discovery identity and manifest content |
 | Checks | `.assert` | None | Source-owned regression contract |
 | Artifact comments | None | `--comments` | Host presentation only |
 | Output prefix | None | `--output` | Host filesystem policy |
@@ -91,11 +89,11 @@ The executor can generate:
 | --- | --- | --- |
 | `multiply.hack` | `write_hack()` | Stable machine-word and metadata boundary |
 | `multiply.driver.sail` | `write_driver()` | Program-specific ROM load lines, run control, assertions, and output |
-| `multiply.c` | Sail C backend | C implementation of ISA + hook + driver |
+| `multiply.c` | Sail C backend | C implementation of ISA + driver |
 | `multiply.h` | Sail C backend | Declarations for generated C |
 | `multiply.exe` on Windows or `multiply` on Linux | C compiler | Final native program |
 
-Stale artifacts are removed before each run so a failed compilation cannot accidentally leave an old executable that appears current. On Windows, the code can use `icacls` to recover current-user permission when deletion is denied.
+A complete `run` creates these files under a temporary sibling directory, compiles and executes them there, and publishes the whole closure only after execution and assertions succeed. Backup-and-replace publication restores previous destinations if installation fails; a failed staged build or run leaves the previously published closure intact.
 
 ## `LoadedHack` is the real executor input
 
@@ -106,7 +104,8 @@ After reload, the object contains only:
 class LoadedHack:
     words: list[int]
     metadata: AssemblyMetadata
-    word_comments: tuple[str | None, ...] = ()
+    word_comments: tuple[str | None, ...]
+    manifest: HackManifest
 ```
 
 There is no parser AST, symbol table, or hidden Python assembly state. Driver behavior can come only from:
@@ -114,10 +113,19 @@ There is no parser AST, symbol table, or hidden Python assembly state. Driver be
 - machine words in `.hack`;
 - structured metadata at the top of `.hack`;
 - optional per-word teaching comments reloaded from `.hack`;
-- fixed `hack.sail` semantics;
-- the package-local hook selected by metadata.
+- fixed `hack.sail` semantics.
 
-`test_run_uses_hook_path_from_reloaded_metadata` specifically proves that hook selection comes from the **reloaded artifact**, not the earlier `AssemblyResult`.
+Here, the loader means the host-side Python artifact loader `isa/hack/tools/artifact.py::load_hack()`, not generated `load_program()` or the Sail model's `fetch_hack()`. The artifact loader and driver do not consume every manifest field in the same way:
+
+| Manifest data | Consumer and effect |
+| --- | --- |
+| `completion` | `artifact.py` validates `lowered-self-loop`, word addressing, sorted/ranged addresses, and the actual `@address; 0;JMP` words. Its addresses become `AssemblyMetadata.halt_addresses`; `executor.py` emits `lowered_halt_n` constants and completion checks from them. |
+| `runtime.max-steps` | Reloaded into `AssemblyMetadata.max_steps`; `executor.py` emits `driver_max_steps`. |
+| `assertions` | Canonicalized and reloaded into `AssemblyMetadata.assertions`; `executor.py` emits Sail assertions. |
+| `comments` | Controls strict word-comment layout and must match the requested driver presentation level. |
+| `isa`, `profile`, `isa-metadata` | `load_hack()` checks that the artifact's `hack/standard` identity and constants exactly match the selected model, and rejects tampering or mismatches. They do not generate driver constants; `loaded_rom_words` comes from the actual reloaded word count, while architectural widths and capacities belong to `hack.sail`. |
+| `source`, `description` | Used for identity and human preambles, not execution semantics. |
+| `provenance` | Omitted for direct Hack assembly because there is no extra frontend transformation lineage. |
 
 ## How the driver loads model-owned ROM
 
@@ -148,7 +156,7 @@ function load_program() -> unit = {
 
 Python only reloads words and writes these ROM load lines. It never decodes A- or C-instructions; legality, decode, and execution remain in Sail. `hack_step()` returns a typed result, and generated `main()` matches that result directly: a retired step continues, while an illegal encoding becomes an explicit driver assertion failure.
 
-The same `none / summary / full` level used for `.hack` controls driver comments. At the default `summary`, each `ROM[index] = word` line carries normalized assembly source, Hack+ words also carry `[i/n] source => canonical`, and inline assembly comments stay at the far right. `full` adds exact original source text and expands the explanations for assertion sources, hooks, and final output. These comments come from `LoadedHack.word_comments`, proving they survived the file boundary.
+The same `none / summary / full` level used for `.hack` controls driver comments. At the default `summary`, each `ROM[index] = word` line carries normalized assembly source, Hack+ words also carry `[i/n] source => canonical`, and inline assembly comments stay at the far right. `full` adds exact original source text and expands the explanations for assertion sources and final output. These comments come from `LoadedHack.word_comments`, proving they survived the file boundary.
 
 `load_program()` writes only the loaded image. Generated `main()` calls `execution_should_continue(PC, steps)` before each attempt, so it never calls `hack_step()` beyond the program's loaded ROM extent.
 
@@ -175,7 +183,7 @@ while execution_should_continue(PC, steps) {
 }
 ```
 
-`loaded_rom_words` is generated from the reloaded artifact's word count—for `basic_alu` it is `53`, covering ROM addresses `0..52`. It is not `max_steps` and does not limit how many times a loop may revisit those addresses. Each `lowered_halt_n` value is generated from a reloaded `//%hack halt {"address": ...}` metadata record; the bit pattern has no special meaning in the Hack ISA.
+`loaded_rom_words` is generated from the reloaded artifact's word count—for `basic_alu` it is `53`, covering ROM addresses `0..52`. It is not `max_steps` and does not limit how many times a loop may revisit those addresses. Each `lowered_halt_n` value comes from `completion.addresses` in the reloaded opening `//%` manifest block; the bit pattern has no special meaning in the Hack ISA.
 
 The condition becomes false in three cases, which the driver distinguishes after the loop:
 
@@ -203,43 +211,24 @@ This is deliberately driver policy. Standard Hack has no encoded HALT instructio
 
 ## Generated run loop
 
-The generated `main()` first calls `load_program()`. Its run-control sequence is conceptually:
+The generated `main()` loads raw words, executes checked model steps under completion and watchdog control, then evaluates source assertions:
 
 ```ocaml
 load_program();
 var steps : int = 0;
-hack_hook_before_run();
 while execution_should_continue(PC, steps) {
-  hack_hook_before_step(steps);
   match hack_step() {
     HackRetired(()) => (),
     HackIllegalInstruction(_) => assert(false, "illegal Hack instruction encoding")
   };
-  steps = steps + 1;
-  hack_hook_after_step(steps)
+  steps = steps + 1
 };
 assert (unsigned(PC) < loaded_rom_words,
         "program counter left the loaded ROM image");
-// assertions
-hack_hook_after_run(steps);
+// source assertions
 ```
 
-The inline `match` returns on `HackRetired(())` and asserts on `HackIllegalInstruction(_)`. Fetch, decode, and execute remain one model-owned `hack_step()`; generated `main()` only turns its typed result into driver policy.
-
-The ordering contract is:
-
-| Point | Meaning of `step` |
-| --- | --- |
-| `load_program()` | Populate model-owned `ROM` before execution |
-| `before_run()` | Before entering the run loop |
-| `before_step(steps)` | Next instruction index, zero-based |
-| inline `match hack_step()` | Check the result of the model-owned fetch → decode → execute transition |
-| `steps = steps + 1` | Increment completed instruction count |
-| `after_step(steps)` | One-based completed count |
-| source assertions | Core regression contract after the loop |
-| `after_run(steps)` | Called only after source assertions pass |
-
-The executor component tests fix this contract by checking source order in the generated driver.
+The driver owns completion checks, watchdog enforcement, source assertions, and final output. Fetch, decode, and execute remain one model-owned `hack_step()`; generated `main()` only turns its typed result into driver policy.
 
 ## Two meanings of `max_steps`
 
@@ -295,11 +284,11 @@ RAM[100] -> RAM[100]
 | --- | --- |
 | `R0 == -1` | `RAM[0] == 0xFFFF`, bit exact |
 | `R0 != 0` | `RAM[0] != 0x0000`, bit exact |
-| `R0 < -1` | `signed(RAM[0]) < -1` |
+| `signed(R0) < -1` | `signed(RAM[0]) < -1` |
 | `unsigned(R0) > 32768` | `unsigned(RAM[0]) > 32768` |
-| `PC >= 10` | `unsigned(PC) >= 10` |
+| `unsigned(PC) >= 10` | `unsigned(PC) >= 10` |
 
-Equality and inequality always compare architectural bits. Even `signed(R0) == -1` emits a bit comparison against `0xFFFF`. Only relational operators use `signed()` or `unsigned()`.
+Equality and inequality always compare architectural bits and reject any `signed(...)` or `unsigned(...)` wrapper. Ordered operators require one of those wrappers explicitly. The common parser enforces that distinction before Hack validates `A`, `D`, `PC`, `R0..R15`, or `RAM[index]`.
 
 Failure messages retain the assembly source line:
 
@@ -308,35 +297,6 @@ assertion signed(R0) < -1 from source line 23 failed
 ```
 
 A runtime failure can therefore lead back to `.asm`, rather than only to generated driver code.
-
-## Hook selection and confinement
-
-Hook selection uses the same runtime-setting precedence:
-
-```text
-CLI --hook > source .hook > hooks/default.sail
-```
-
-`--hook` is normalized with the same rules as `.hook`. The effective path replaces source metadata before `.hack` is written, and the executor resolves the selected file only after strict reload. For example:
-
-```sh
-pixi run just hack run multiply summary --hook hooks/trace.sail --max-steps 10000
-```
-
-Security rules require that the path:
-
-- is a relative POSIX `.sail` path;
-- contains no `..`, absolute root, or drive prefix;
-- exists as a regular file;
-- still resolves under `isa/hack` after filesystem canonicalization.
-
-The final Sail inputs are:
-
-```text
-hack.sail + selected hook + generated driver
-```
-
-A hook shares the generated process and can directly access `A`, `D`, `PC`, `RAM`, and model-owned `ROM`. That power is why hook source is confined to the package.
 
 ## Sail-to-native compilation
 
@@ -357,11 +317,10 @@ Conceptually:
 ```sh
 sail -c -o <output-prefix> \
   isa/hack/hack.sail \
-  <selected-hook.sail> \
   <output-prefix>.driver.sail
 ```
 
-Sail type-checks all three sources together and emits `<output>.c` and `<output>.h`.
+Sail type-checks both sources together and emits `<output>.c` and `<output>.h`.
 
 ### 3. Compile, link, and run
 
@@ -383,10 +342,9 @@ The Pixi/Conda prefix locates GMP headers and libraries. After a successful link
 
 After execution and successful assertions, the driver:
 
-1. calls `hack_hook_after_run(steps)`;
-2. prints `ASSERT PASS` when assertions exist, otherwise `RUN COMPLETE`;
-3. prints `A`, `D`, and `PC`;
-4. prints `R0..R7`.
+1. prints `ASSERT PASS` when assertions exist, otherwise `RUN COMPLETE`;
+2. prints `A`, `D`, and `PC`;
+3. prints `R0..R7`.
 
 These registers are a human-readable summary, not the test oracle. Sail `assert` and process exit status determine success; workflow does not scrape console output to guess whether a program passed.
 
@@ -404,13 +362,13 @@ isa/hack/programs/*.asm
 
 Files are sorted by filename, and the filename stem becomes the command name. For example, `multiply.asm` is selected by `just hack run multiply`.
 
-Every bundled source must contain exactly one nonempty source-only directive:
+Every bundled source must contain exactly one nonempty description directive:
 
 ```asm
 .description Repeated-addition multiplication: 6 times 7
 ```
 
-The assembler parser validates `.description`, but `expand()` discards it before machine-code and execution-metadata construction. `source_description()` exposes it to workflow. Discovery data stays beside the program, while `.description` is not serialized into `.hack` metadata.
+The assembler parser validates `.description`, `source_description()` exposes it to workflow discovery, and `assemble_text()` stores it in `AssemblyMetadata`. `artifact.py` serializes the same text as manifest `description`; it emits no machine word.
 
 `discover_programs()` additionally verifies that each file resolves inside the Hack package and actually exists. Direct `glob("*.asm")` intentionally ignores nested directories and non-assembly files.
 
@@ -420,12 +378,12 @@ The assembler parser validates `.description`, but `expand()` discards it before
 | --- | --- |
 | `list` | Discover and print every direct `programs/*.asm` source |
 | `check` | Ensure Sail, then run `sail --just-check hack.sail` |
-| `asm NAME` | Invoke assembler CLI and write `.build/NAME.hack` |
+| `assemble NAME` | Invoke assembler CLI and write `.build/NAME.hack` atomically |
 | `run NAME` | Invoke executor CLI for assemble, generation, compile, and run |
 | `test` | Run package Pytest, then integration-run every discovered source |
 | `clean` | Recreate `.build/` containing only `.gitkeep` |
 
-`isa/hack/justfile` exposes these actions with memorable recipes. The root `justfile` then aggregates the Hack module into repository-wide `test` and `clean-all`.
+`isa/hack/justfile` exposes these actions directly as `just hack ...` recipes. The root `test` and `clean-all` recipes aggregate the module commands.
 
 ## What `just hack test` verifies
 
@@ -438,7 +396,7 @@ flowchart TD
     Programs --> Required[executor --require-assertions]
     Required --> SailRun[compile and run through Sail C backend]
     SailRun --> Assertions[source .assert]
-    SailRun --> Conformance[optional Sail hook checks]
+    Pytest --> Conformance[direct Sail ISA conformance checks]
 ```
 
 ### Layer 1: assembler tests
@@ -453,7 +411,6 @@ flowchart TD
 - checked `hack_step()` dispatch and explicit loaded-image boundary failure;
 - bounded-loop behavior;
 - bit-exact, signed, unsigned, and PC assertions;
-- hook path confinement and call order;
 - reloaded metadata as the source of truth.
 
 Some tests monkeypatch native compilation to isolate Python boundary behavior.
@@ -470,18 +427,7 @@ An example without `.assert` fails immediately, preventing bundled sources that 
 
 ### Layer 4: direct Sail ISA conformance
 
-`isa_conformance.asm` selects:
-
-```asm
-.hook tests/isa_conformance.sail
-```
-
-Its `before_run()` hook directly calls `alu()`, `should_jump()`, and `execute()` to cover every ALU operation, jump truth table, destination mask, old-`A` behavior, and PC wraparound. A tiny assembly program then runs through the ordinary loop and checks final `.assert` directives.
-
-This verifies both:
-
-- the Sail ISA functions themselves;
-- integration across assembler, metadata, hook, driver, and C backend.
+`tests/isa_conformance.sail` directly checks `alu()`, `should_jump()`, and `execute()`, covering ALU operations, the jump truth table, destination masks, old-`A` behavior, and PC wraparound. This layer tests Sail ISA functions independently of the generated-driver integration path.
 
 ### Repository-wide tests
 
@@ -497,7 +443,7 @@ Follow artifact boundaries from front to back:
 
 1. **Source error**: inspect assembler `line N` diagnostics.
 2. **Encoding error**: run `just hack assemble NAME` and inspect the source annotations beside `.hack` words.
-3. **Metadata error**: inspect `//%hack` records at the top of `.hack`.
+3. **Metadata error**: inspect the opening `//%` manifest block in `.hack`.
 4. **Driver error**: open `.driver.sail` and inspect `load_program()` ROM lines, checked-step run control, and assertions.
 5. **Sail type error**: read Sail `-c` output directly.
 6. **C build error**: verify compiler, runtime include path, GMP, and compatibility layer.
@@ -513,9 +459,8 @@ Do not start by adding prints to `workflow.py`. It usually propagates a lower-la
 1. `run`
 2. `write_driver`
 3. `_assertion_expression`
-4. `resolve_hook_source`
-5. `compile_and_run`
-6. `main`
+4. `compile_and_run`
+5. `main`
 
 ### Workflow
 
@@ -539,7 +484,6 @@ Open `isa/hack/.build/multiply.driver.sail` and locate:
 - the HALT address;
 - the generated run loop and checked `hack_step()` call;
 - the Sail assertion corresponding to `R2 == 42`;
-- hook call order.
 
 ### Exercise 2: write a bounded program
 
@@ -551,7 +495,7 @@ Deliberately introduce, one at a time:
 
 1. an invalid assembly mnemonic;
 2. an incorrect `.assert` expected value;
-3. a Sail type error in a hook;
+3. a Sail type error in a generated driver;
 4. a missing or duplicate `.description` in one bundled source.
 
 Observe which layer catches each error. A clear toolchain should fail as close as possible to the root cause.

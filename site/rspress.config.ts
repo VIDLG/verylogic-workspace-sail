@@ -43,6 +43,7 @@ export default defineConfig({
           items: [
             { text: 'Documentation home', link: '/' },
             { text: 'Why Sail', link: '/why-sail' },
+            { text: 'Common teaching contract', link: '/reference/teaching-contract' },
           ],
         },
         {
@@ -55,12 +56,13 @@ export default defineConfig({
           ],
         },
         {
-          text: 'Toolchain internals',
+          text: 'Hack advanced topics',
           items: [
             { text: 'Assembler', link: '/hack/assembler' },
             { text: 'Execution and tests', link: '/hack/execution' },
           ],
         },
+
       ],
       '/zh/': [
         {
@@ -68,6 +70,7 @@ export default defineConfig({
           items: [
             { text: '文档首页', link: '/zh/' },
             { text: '为什么选择 Sail', link: '/zh/why-sail' },
+            { text: '公共教学契约', link: '/zh/reference/teaching-contract' },
           ],
         },
         {
@@ -80,12 +83,13 @@ export default defineConfig({
           ],
         },
         {
-          text: '工具链内部原理',
+          text: 'Hack 高级主题',
           items: [
             { text: '汇编器', link: '/zh/hack/assembler' },
             { text: '执行器与测试', link: '/zh/hack/execution' },
           ],
         },
+
       ],
     },
   },
