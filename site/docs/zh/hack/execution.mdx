@@ -8,12 +8,12 @@
 
 | 文件 | 负责什么 | 不负责什么 |
 | --- | --- | --- |
-| `hack.sail` | ROM 存储、原始机器字取指、A/C 解码、类型化 `hack_step()`、ALU、寄存器、RAM 和 PC 状态转换 | 加载特定程序映像、特定程序的 `main()`、测试程序发现 |
+| `model/core.sail`、profile 入口文件/project | 共享 instruction/exception、ALU/state/fetch/decode/encode/execute/step，以及 profile 位宽、合法性与 mapping clauses | 加载特定程序映像、特定程序的 `main()`、测试程序发现 |
 | `artifact.py` | 序列化 runtime override、创建文件开头的 manifest block、原子写 `.hack`、严格加载与 Hack-specific manifest/completion 校验 | 指令解析、driver 策略或模型语义 |
 | `executor.py` | Staged driver generation、加载原始 ROM、运行控制、Sail/C 编译、断言、执行与 closure 发布 | A/C 解码、程序发现和批量测试策略 |
 | `workflow.py` | 发现源码、选择程序、组织 `check/assemble/run/test/clean` | ISA 语义和机器状态判断 |
 
-这种拆分让 `hack.sail` 保持为可复用的 ISA 模型。换一个 Hack 程序只需要生成新的 ROM 加载器和 driver，不需要改取指、解码或 CPU 语义。
+这种拆分让共享语义保持可复用，同时由每个 `projects/<profile>.sail_project` 固定一份完整 ISA 模型。换一个 Hack 程序只需要生成新的 ROM 加载器和 driver，不需要改取指、解码或 CPU 语义。
 
 ```mermaid
 flowchart TD
@@ -30,7 +30,7 @@ flowchart TD
     Native --> Result[ROM load + hack_step loop + Sail assertions]
 ```
 
-## 为什么 `hack.sail` 没有 `main()`
+## 为什么 profile project 没有 `main()`
 
 ISA 模型拥有架构 ROM，并回答“一步执行怎样取出原始机器字、解码并改变架构状态”，但一个可运行程序还需要回答：
 
@@ -50,7 +50,7 @@ ISA 模型拥有架构 ROM，并回答“一步执行怎样取出原始机器字
 2. assemble(program) 得到 AssemblyResult
 3. 按 CLI > source > default 解析有效 `max_steps`
 4. 检查断言要求与 ROM 大小
-5. 创建临时 sibling staging directory
+5. 在最终产物文件旁创建临时 staging 子目录
 6. write_hack() 写入 staged <output>.hack
 7. load_hack() 从磁盘严格重新加载
 8. 从 LoadedHack 生成 staged <output>.driver.sail
@@ -77,10 +77,10 @@ ISA 模型拥有架构 ROM，并回答“一步执行怎样取出原始机器字
 
 ## 构建产物
 
-以 `multiply` 为例，输出前缀是：
+默认 `hack16` 的 `multiply` 单程序输出 prefix 如下；`--profile hack32` 会把 profile 目录替换为 `hack32`，`asm` 表示直接汇编 frontend：
 
 ```text
-isa/hack/.build/multiply
+isa/hack/.build/hack16/asm/multiply/multiply
 ```
 
 executor 可能生成：
@@ -89,11 +89,12 @@ executor 可能生成：
 | --- | --- | --- |
 | `multiply.hack` | `write_hack()` | 机器字和运行 metadata 的稳定边界 |
 | `multiply.driver.sail` | `write_driver()` | 程序专属 ROM 加载行、运行控制、断言和输出 |
+| `multiply.driver.sail_project` | `write_driver_project()` | 把生成的 driver 连接到所选固定 profile project |
 | `multiply.c` | Sail C 后端 | ISA + driver 的 C 实现 |
 | `multiply.h` | Sail C 后端 | 生成 C 的声明 |
 | `multiply.exe`（Windows）或 `multiply`（Linux） | C 编译器 | 最终宿主机程序 |
 
-完整 `run` 在临时 sibling directory 中创建、编译并执行这些文件，只有 execution/assertions 成功才发布整个 closure。Backup-and-replace 发布在安装失败时恢复先前目标；staged build 或 run 失败会保留先前已发布 closure。
+完整 `run` 会在 `.build/<profile>/asm/<program>/` 内、最终产物文件旁的临时 staging 子目录中创建、编译并执行这些文件，只有 execution/assertions 成功才发布整个单程序 closure。Backup-and-replace 发布在安装失败时恢复先前目标；staged build 或 run 失败会保留先前已发布 closure。
 
 ## `LoadedHack` 是 executor 的真正输入
 
@@ -102,6 +103,7 @@ executor 可能生成：
 ```python
 @dataclass(frozen=True)
 class LoadedHack:
+    profile: Profile
     words: list[int]
     metadata: AssemblyMetadata
     word_comments: tuple[str | None, ...]
@@ -113,7 +115,7 @@ class LoadedHack:
 - `.hack` 中的机器字；
 - `.hack` 顶部结构化 metadata；
 - 从 `.hack` 重新加载的可选逐机器字教学注释；
-- 固定的 `hack.sail`。
+- 所选 profile project 的语义。
 
 这里的 loader 专指宿主侧 Python artifact loader `isa/hack/tools/artifact.py::load_hack()`，不是 generated `load_program()`，也不是 Sail 模型里的 `fetch_hack()`。Artifact loader 与 driver 对各 manifest 字段的消费方式并不相同：
 
@@ -123,13 +125,13 @@ class LoadedHack:
 | `runtime.max-steps` | 重载为 `AssemblyMetadata.max_steps`；`executor.py` 据此生成 `driver_max_steps`。 |
 | `assertions` | 规范化并重载为 `AssemblyMetadata.assertions`；`executor.py` 据此生成 Sail assertions。 |
 | `comments` | 约束严格的逐机器字注释布局，并且必须与请求的 driver 展示档位一致。 |
-| `isa`、`profile`、`isa-metadata` | `load_hack()` 检查 artifact 的 `hack/standard` identity 与常量是否精确匹配当前所选模型，并拒绝篡改或不一致；它们不会生成 driver 常量。`loaded_rom_words` 来自实际重载的机器字数量，架构位宽和容量则由 `hack.sail` 定义。 |
+| `isa`、`profile`、`isa-metadata` | `load_hack()` 要求 `isa=hack`，`profile` 为 `hack16` 或 `hack32`，并按所选模型校验常量、拒绝篡改或不一致；`standard` 从来不是合法 profile。`loaded_rom_words` 来自实际重载字数，架构位宽和容量属于所选 project。 |
 | `source`、`description` | 用于 identity 和人类可读 preamble，不参与执行语义。 |
 | `provenance` | Hack 直接汇编没有额外 frontend 转换链，因此省略。 |
 
 ## driver 怎样加载模型自有的 ROM
 
-`hack.sail` 拥有完整的架构指令存储和原始取指操作：
+所选 profile composition 拥有完整架构指令存储，并复用共享原始取指操作：
 
 ```ocaml
 register ROM : vector(32768, word)
@@ -138,10 +140,11 @@ function fetch_hack(pc : program_counter) -> word =
   ROM[unsigned(pc)]
 ```
 
-`fetch_hack(pc)` 返回原始 16 位 `word`，不负责解码。模型的 `hack_step()` 组合完整架构路径：
+`fetch_hack(pc)` 返回 profile 宽度的原始 `word`——`hack16` 为 16 位，`hack32` 为 32 位——不负责解码。模型的 `hack_step()` 组合完整架构路径：
 
 ```text
-fetch_hack(PC) -> decode_hack(word) -> execute(decoded instruction) -> 类型化单步结果
+fetch_hack(PC) -> decode_hack(word) -> execute(decoded instruction) -> unit
+                              非法机器字 -> throw HackIllegalInstruction(word)
 ```
 
 `write_driver()` 不再生成 `instruction_at`、`execute_at` 或地址到解码结果的 `match`，而是生成包含原始赋值的 `load_program()`：
@@ -154,7 +157,7 @@ function load_program() -> unit = {
 }
 ```
 
-Python 只重新加载机器字并写出这些 ROM 加载行，从不解码 A 指令或 C 指令；合法性检查、解码和执行都留在 Sail 中。`hack_step()` 返回类型化结果，生成的 `main()` 直接匹配该结果：成功退役就继续，非法编码则转成显式的 driver 断言失败。
+示例加载行是默认 `hack16` 形式；`hack32` 行使用 32 位 literal。Python 只重新加载机器字并写出这些 ROM 加载行，从不解码 A 指令或 C 指令；合法性检查、解码和执行都留在 Sail 中。合法 `hack_step()` 返回 `unit`；非法编码会在执行开始前抛出 `HackIllegalInstruction(word)`。生成的 driver 直接调用 `hack_step()`，未预期的 exception 会使运行失败。
 
 `.hack` 和 driver 共用 `none / summary / full` 级别。默认的 `summary` 会在每个 `ROM[index] = word` 加载行旁显示规范化汇编源码，Hack+ 机器字还带有 `[i/n] 源伪指令 => 正式指令`，行内汇编注释放在最右侧。`full` 增加精确的原始源码文本，并扩展断言来源与最终输出解释。这些内容来自 `LoadedHack.word_comments`，说明注释确实穿过了磁盘文件边界。
 
@@ -179,7 +182,8 @@ function execution_should_continue(pc : program_counter, steps : int) -> bool = 
 
 ```ocaml
 while execution_should_continue(PC, steps) {
-  // 执行并检查一次 hack_step
+  hack_step();
+  steps = steps + 1
 }
 ```
 
@@ -201,9 +205,9 @@ Hack+ `HALT` 展开为：
 0;JMP
 ```
 
-metadata 记录私有标签地址。driver 在循环开始处发现 `PC` 已等于该地址，于是退出；这两条自循环机器字保留在 `.hack` 中，保证产物在原生 Hack 上仍是合法程序。
+metadata 记录私有标签地址。driver 在循环开始处发现 `PC` 已等于该地址，于是退出；这两条自循环机器字保留在 `.hack` 中，因此产物对所选 profile 仍合法，并会在匹配该 profile 的实现上停留于自循环。
 
-这有意属于 driver 策略。标准 Hack 没有编码后的 HALT 指令：Hack+ `HALT` 是汇编便利写法，ROM 末尾来自已加载 artifact，两者都不是 `hack.sail` 返回的架构 outcome。只有将来 ISA 真正增加 HALT opcode 时，解码并返回该结果才应进入模型。
+这有意属于 driver 策略。两个 profile 都没有编码后的 HALT 指令：Hack+ `HALT` 是汇编便利写法，ROM 末尾来自已加载 artifact，两者都不是所选 project 返回的架构 outcome。若未来某个 profile 真正增加 HALT opcode，解码并返回该结果才应进入模型。
 
 ### 32768 字 ROM 特例
 
@@ -211,16 +215,13 @@ metadata 记录私有标签地址。driver 在循环开始处发现 `PC` 已等�
 
 ## 生成的运行循环
 
-生成的 `main()` 先加载原始机器字，在 completion 与 watchdog 控制下执行经过检查的模型步骤，最后求值源码断言：
+生成的 `main()` 先加载原始机器字，在 completion 与 watchdog 控制下执行模型步骤，最后求值源码断言：
 
 ```ocaml
 load_program();
 var steps : int = 0;
 while execution_should_continue(PC, steps) {
-  match hack_step() {
-    HackRetired(()) => (),
-    HackIllegalInstruction(_) => assert(false, "illegal Hack instruction encoding")
-  };
+  hack_step();
   steps = steps + 1
 };
 assert (unsigned(PC) < loaded_rom_words,
@@ -228,7 +229,7 @@ assert (unsigned(PC) < loaded_rom_words,
 // 源码断言
 ```
 
-Driver 负责 completion 检查、watchdog、源码断言和最终输出。取指、解码和执行仍是模型自有的一个 `hack_step()`；生成的 `main()` 只把类型化结果转换为 driver 策略。
+Driver 负责 completion 检查、watchdog、源码断言和最终输出。取指、解码、执行和非法机器字拒绝仍集中在模型自有的 `hack_step()`；生成的 `main()` 只提供运行控制策略。
 
 ## `max_steps` 的两种语义
 
@@ -312,15 +313,7 @@ sail = install_sail.ensure_installed()
 
 ### 2. Sail 生成 C
 
-概念命令：
-
-```sh
-sail -c -o <output-prefix> \
-  isa/hack/hack.sail \
-  <output-prefix>.driver.sail
-```
-
-Sail 对两个文件整体做类型检查，并生成 `<output>.c` 与 `<output>.h`。
+概念上，executor 把所选 `isa/hack/projects/<profile>.sail_project` 源码闭包与 `<output-prefix>.driver.sail` 一起交给 Sail。Sail 对该 profile 与 driver 整体做类型检查，再生成 `<output>.c` 与 `<output>.h`。
 
 ### 3. C 编译、链接并运行
 
@@ -377,15 +370,17 @@ Assembler parser 校验 `.description`，`source_description()` 把它提供给 
 | action | workflow 行为 |
 | --- | --- |
 | `list` | 发现并打印全部直接 `programs/*.asm` 源码 |
-| `check` | 确保 Sail 已安装，执行 `sail --just-check hack.sail` |
-| `assemble NAME` | 调用 assembler CLI，原子写 `.build/NAME.hack` |
-| `run NAME` | 调用 executor CLI，完成汇编、生成、编译和运行 |
-| `test` | 先运行包内 Pytest，再逐个集成运行全部已发现源码 |
-| `clean` | 重建只含 `.gitkeep` 的 `.build/` |
+| `check` | 检查两个 profile project；`--profile hack32` 可缩窄到一个 |
+| `assemble NAME` | 为所选 profile（默认 `hack16`）原子写 `.build/<profile>/asm/NAME/NAME.hack` |
+| `run NAME` | 为所选 profile 完成汇编、生成、编译和运行 |
+| `test` | 对两个 profile 运行 Python/tooling、直接 Sail 与 discovered-program matrix |
+| `clean` | 重建 profile-aware `.build/` 结构 |
 
 `isa/hack/justfile` 直接把这些 action 暴露为 `just hack ...` 命令。根 `test` 与 `clean-all` 负责聚合各模块命令。
 
 ## `just hack test` 到底测试什么
+
+`pixi run just hack check` 检查两个 project；`pixi run just hack check --profile hack32` 是窄门禁。完整 `test` 命令始终运行两个 profile。
 
 ```mermaid
 flowchart TD
@@ -427,7 +422,7 @@ executor.py ... --require-assertions
 
 ### 第四层：直接 Sail ISA 一致性测试
 
-`tests/isa_conformance.sail` 直接检查 `alu()`、`should_jump()` 和 `execute()`，覆盖 ALU 运算、跳转真值表、destination 掩码、旧 `A` 语义和 PC 回绕。这一层独立验证 Sail ISA 函数，不依赖 generated-driver 集成路径。
+`tests/sail/hack16/conformance.sail` 与 `tests/sail/hack32/conformance.sail` 直接检查 profile known word/合法性，以及共享 `alu()`、跳转、destination、旧 `A`、PC 回绕和 fault 不提交。这一层独立验证 Sail ISA 函数，不依赖 generated-driver 集成路径。
 
 ### 全仓库测试
 
@@ -480,7 +475,7 @@ pixi run just test
 pixi run just hack run multiply
 ```
 
-打开 `isa/hack/.build/multiply.driver.sail`，找到：
+打开 `isa/hack/.build/hack16/asm/multiply/multiply.driver.sail`（或对应 `.build/hack32/asm/multiply/` artifact），找到：
 
 - `ROM[0] = word` 加载行；
 - HALT 地址；

@@ -24,6 +24,7 @@ from isa.hack.tools.assembler import (
     Assertion,
     assemble,
 )
+from isa.hack.tools.profiles import DEFAULT_PROFILE, Profile, get_profile
 from tools import install_sail
 from tools.isa_support.cli import (
     COMMENT_LEVELS,
@@ -34,8 +35,6 @@ from tools.isa_support.host_c import compile_sail_generated_c
 from tools.isa_support.manifest import render_preamble
 from tools.isa_support.process import run_checked
 from tools.isa_support.publish import publish_artifact_closure
-
-ISA_SOURCE = PACKAGE_ROOT / "hack.sail"
 
 
 def command(args: Sequence[str | os.PathLike[str]]) -> None:
@@ -52,25 +51,25 @@ def _assertion_location(target: str) -> str:
     return target
 
 
-def _assertion_expression(assertion: Assertion) -> str:
+def _assertion_expression(assertion: Assertion, profile: Profile) -> str:
     location = _assertion_location(assertion.target)
     if assertion.operator in {"==", "!="}:
         literal = (
             f"0b{assertion.value:015b}"
             if assertion.target == "PC"
-            else f"0x{assertion.value:04X}"
+            else f"0x{assertion.value:0{profile.hex_digits}X}"
         )
         return f"{location} {assertion.operator} {literal}"
     return f"{assertion.mode}({location}) {assertion.operator} {assertion.value}"
 
 
-def _assertion_source(assertion: Assertion) -> str:
+def _assertion_source(assertion: Assertion, profile: Profile) -> str:
     target = assertion.display_target or assertion.target
     if assertion.operator in {"==", "!="}:
         value = (
             f"0b{assertion.value:015b}"
             if assertion.target == "PC"
-            else f"0x{assertion.value:04X}"
+            else f"0x{assertion.value:0{profile.hex_digits}X}"
         )
     else:
         value = str(assertion.value)
@@ -91,6 +90,7 @@ def write_driver(
             f"artifact comment level {manifest.comments!r} "
             f"does not match driver level {comments!r}"
         )
+    profile = program.profile
     words = program.words
     metadata = program.metadata
     max_steps = metadata.max_steps
@@ -114,7 +114,7 @@ def write_driver(
             )
             annotation = source or f"ROM[{address:04d}]"
             suffix = f" // {annotation}"
-        load_lines.append(f"  ROM[{address}] = 0b{word:016b};{suffix}")
+        load_lines.append(f"  ROM[{address}] = 0b{word:0{profile.word_bits}b};{suffix}")
     loads = "\n".join(load_lines)
     halt_lines: list[str] = []
     for index, address in enumerate(metadata.halt_addresses):
@@ -147,10 +147,13 @@ def write_driver(
     for assertion in metadata.assertions:
         if comments == "full":
             assertion_lines.append(
-                f"  // Source line {assertion.line}: .assert {_assertion_source(assertion)}"
+                f"  // Source line {assertion.line}: .assert "
+                f"{_assertion_source(assertion, profile)}"
             )
         assertion_lines.append(
-            f'  assert ({_assertion_expression(assertion)}, "assertion {_assertion_source(assertion)} from source line {assertion.line} failed");'
+            f'  assert ({_assertion_expression(assertion, profile)}, "assertion '
+            f"{_assertion_source(assertion, profile)} from source line "
+            f'{assertion.line} failed");'
         )
     assertions = "\n".join(assertion_lines)
     status = "ASSERT PASS" if metadata.assertions else "RUN COMPLETE"
@@ -158,12 +161,9 @@ def write_driver(
     inline_step_doc = (
         ""
         if comments == "none"
-        else ("    // Check the model-owned fetch, decode, and execute outcome.\n")
+        else ("    // Run one model-owned fetch, decode, and execute step.\n")
     )
-    step_body = f"""{inline_step_doc}    match hack_step() {{
-      HackRetired(()) => (),
-      HackIllegalInstruction(_) => assert(false, "illegal Hack instruction encoding")
-    }};
+    step_body = f"""{inline_step_doc}    hack_step();
     steps = steps + 1"""
     continue_condition = f"{pending_condition} & steps < driver_max_steps"
     if bounded_snapshot:
@@ -262,9 +262,35 @@ def write_driver(
     )
 
 
-def compile_and_run(output: Path, driver: Path) -> None:
+def write_driver_project(profile: Profile, driver: Path, project: Path) -> None:
+    if driver.parent.resolve() != project.parent.resolve():
+        raise ValueError("driver and companion project must share a directory")
+    project.write_text(
+        f"""hack_driver {{
+  requires {profile.name}_profile
+  files \"{driver.name}\"
+}}
+""",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def compile_and_run(profile: Profile, output: Path, driver_project: Path) -> None:
     sail = install_sail.ensure_installed()
-    command([sail, "-c", "-o", output, ISA_SOURCE, driver])
+    command(
+        [
+            sail,
+            "--project",
+            profile.sail_project,
+            "--project",
+            driver_project,
+            "--all-modules",
+            "-c",
+            "-o",
+            output,
+        ]
+    )
     executable = artifact_path(output, ".exe") if os.name == "nt" else output
     compile_sail_generated_c(sail, artifact_path(output, ".c"), executable, ROOT)
     command([executable])
@@ -276,16 +302,20 @@ def run(
     max_steps: int | None = None,
     require_assertions: bool = False,
     comments: str = "summary",
+    profile: str = DEFAULT_PROFILE,
 ) -> None:
     comments = validate_comment_level(comments)
+    selected_profile = get_profile(profile)
     if max_steps is not None and max_steps <= 0:
         raise ValueError("--max-steps must be a positive integer")
     if output.name in {"", ".", ".."}:
         raise ValueError("--output must be a file prefix")
 
-    assembly = assemble(program)
-    if len(assembly.records) > 32768:
-        raise ValueError("program exceeds the 32768-word Hack ROM")
+    assembly = assemble(program, profile=selected_profile.name)
+    if len(assembly.records) > selected_profile.rom_words:
+        raise ValueError(
+            f"program exceeds the {selected_profile.rom_words}-word Hack ROM"
+        )
     assembly = apply_runtime_overrides(assembly, max_steps=max_steps)
     if require_assertions and not assembly.metadata.assertions:
         raise ValueError(
@@ -300,12 +330,13 @@ def run(
         staged_output = Path(temporary) / output.name
         staged_machine = artifact_path(staged_output, ".hack")
         staged_driver = artifact_path(staged_output, ".driver.sail")
+        staged_driver_project = artifact_path(staged_output, ".driver.sail_project")
         staged_executable = (
             artifact_path(staged_output, ".exe") if os.name == "nt" else staged_output
         )
 
         write_hack(assembly, staged_machine, comments)
-        reloaded = load_hack(staged_machine)
+        reloaded = load_hack(staged_machine, expected_profile=selected_profile.name)
 
         if require_assertions and not reloaded.metadata.assertions:
             raise ValueError("annotated .hack reload lost required assertions")
@@ -321,11 +352,13 @@ def run(
             comments,
             bounded_snapshot=bounded_snapshot,
         )
-        compile_and_run(staged_output, staged_driver)
+        write_driver_project(reloaded.profile, staged_driver, staged_driver_project)
+        compile_and_run(reloaded.profile, staged_output, staged_driver_project)
 
         staged = (
             staged_machine,
             staged_driver,
+            staged_driver_project,
             artifact_path(staged_output, ".c"),
             artifact_path(staged_output, ".h"),
             staged_executable,
@@ -334,6 +367,7 @@ def run(
         final = (
             artifact_path(output, ".hack"),
             artifact_path(output, ".driver.sail"),
+            artifact_path(output, ".driver.sail_project"),
             artifact_path(output, ".c"),
             artifact_path(output, ".h"),
             final_executable,
@@ -357,6 +391,11 @@ def main() -> int:
 
     _ = parser.add_argument("--require-assertions", action="store_true")
     _ = parser.add_argument(
+        "--profile",
+        default=DEFAULT_PROFILE,
+        help="Hack architecture profile: hack16 (default) or hack32",
+    )
+    _ = parser.add_argument(
         "--comments",
         choices=COMMENT_LEVELS,
         default="summary",
@@ -371,6 +410,7 @@ def main() -> int:
             max_steps=args.max_steps,
             require_assertions=args.require_assertions,
             comments=args.comments,
+            profile=args.profile,
         )
     except (AssemblyError, OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)

@@ -512,6 +512,13 @@ def test_host_c_compiles_generated_c_without_sail_frontend_or_execution(
     sail_lib = tmp_path / "sail-root/share/sail/lib"
     sail_lib.mkdir(parents=True)
     generated_c = tmp_path / "program.c"
+    generated_c.write_text(
+        r'COPY(sail_string)(throw_location, "D:\projects\model.sail:1.1-1.2");'
+        "\n"
+        r'const char *ordinary = "D:\runtime";'
+        "\n",
+        encoding="utf-8",
+    )
     executable = tmp_path / "program"
     calls: list[tuple[list[str], Path | None]] = []
 
@@ -538,3 +545,8 @@ def test_host_c_compiles_generated_c_without_sail_frontend_or_execution(
     ]
     assert str(sail) not in args
     assert cwd == workspace
+    assert generated_c.read_text(encoding="utf-8") == (
+        'COPY(sail_string)(throw_location, "D:/projects/model.sail:1.1-1.2");\n'
+        r'const char *ordinary = "D:\runtime";'
+        "\n"
+    )

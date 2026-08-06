@@ -186,11 +186,15 @@ def test_manifest_records_complete_hack_contract_and_default_origins(
         "address_unit": "word",
         "addresses": (0,),
     }
+    assert manifest.profile == "hack16"
     assert manifest.isa_metadata == {
         "word_bits": 16,
+        "a_immediate_bits": 15,
         "address_bits": 15,
+        "pc_bits": 15,
         "rom_words": 32768,
         "ram_words": 32768,
+        "sail_project": "hack16.sail_project",
     }
     assert "executor" not in manifest.model_dump(mode="python", by_alias=True)
     assert lines[manifest_lines] == "// Annotated image: Minimal completion"
@@ -475,6 +479,46 @@ def test_loader_rejects_raw_hack_without_teaching_manifest(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="must begin"):
         load_hack(output)
+
+
+def test_hack32_assembly_and_artifact_round_trip(tmp_path: Path) -> None:
+    assembly = assemble_text(
+        "@2147483647\nD=A\nHALT\n.assert A == 0x7fffffff\n",
+        profile="hack32",
+    )
+    assert assembly.profile.name == "hack32"
+    assert assembly.words[:2] == [0x7FFFFFFF, 0xFFFFEC10]
+
+    output = tmp_path / "program.hack"
+    write_hack(assembly, output)
+    loaded = load_hack(output, expected_profile="hack32")
+
+    assert loaded.profile.name == "hack32"
+    assert loaded.words == assembly.words
+    assert all(
+        len(line.split(" //", maxsplit=1)[0]) == 32
+        for line in output.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("//")
+    )
+    with pytest.raises(ValueError, match="does not match expected profile"):
+        load_hack(output, expected_profile="hack16")
+
+
+def test_profile_specific_a_values_assertions_and_pseudo_addresses() -> None:
+    assert assemble_text("@32768\n", profile="hack32").words == [32768]
+    with pytest.raises(AssemblyError, match="hack16 A-instruction value"):
+        assemble_text("@32768\n", profile="hack16")
+    with pytest.raises(AssemblyError, match="hack32 A-instruction value"):
+        assemble_text("@2147483648\n", profile="hack32")
+    with pytest.raises(AssemblyError, match="memory/jump address"):
+        assemble_text("CLR 32768\n", profile="hack32")
+
+    assertion = assemble_text(
+        ".assert A == 0xffffffff\n.assert signed(D) >= -2147483648\n",
+        profile="hack32",
+    ).metadata.assertions
+    assert assertion[0].value == 0xFFFFFFFF
+    assert assertion[1].value == -2147483648
 
 
 @pytest.mark.parametrize(

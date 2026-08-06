@@ -147,7 +147,7 @@ The primary reading view—the place readers are expected to spend most of their
 
 ### Add another ISA
 
-1. Maintainer reads the root [`AGENTS.md`](../../AGENTS.md) and shared [Sail modeling conventions](../SAIL_MODELING.md).
+1. Maintainer reads the root [`AGENTS.md`](../../AGENTS.md) and shared [Sail modeling conventions](../sail/MODELING.md).
 2. Maintainer creates `isa/<name>/` with its own workflow.
 3. Maintainer adds matching `/<name>/` and `/zh/<name>/` documentation.
 4. Maintainer adds the module to site navigation and aggregate commands.
@@ -169,7 +169,7 @@ The primary reading view—the place readers are expected to spend most of their
 
 ## Sail Modeling Conventions
 
-Repository-wide Sail naming, typed-field, explicit decode/encode, and illegal-encoding rules live in [`.design/SAIL_MODELING.md`](../SAIL_MODELING.md). ISA documentation should link or summarize architecture-specific consequences without copying the full maintenance contract into every subtree.
+Repository-wide Sail naming, typed-field, explicit decode/encode, and illegal-encoding rules live in [`.design/sail/MODELING.md`](../sail/MODELING.md). ISA documentation should link or summarize architecture-specific consequences without copying the full maintenance contract into every subtree.
 
 ## Component Reuse Map
 
@@ -184,7 +184,7 @@ Repository-wide Sail naming, typed-field, explicit decode/encode, and illegal-en
 
 ## Content Growth Plan
 
-- Cross-ISA concepts and workspace-wide technology choices live directly under `site/docs/<locale>/`; they must not be duplicated into every ISA subtree. Internal model-maintenance rules remain canonical in `.design/SAIL_MODELING.md`.
+- Cross-ISA concepts and workspace-wide technology choices live directly under `site/docs/<locale>/`; they must not be duplicated into every ISA subtree. Internal model-maintenance rules remain canonical in `.design/sail/MODELING.md`.
 - Each new ISA receives one parallel `site/docs/<locale>/<isa>/` subtree.
 - Start with overview, tutorial, and ISA; add tool-specific pages only when that ISA has those tools.
 - Keep article depth flat beneath each ISA. Split an article only when it has an independent reader task and stable navigation label.

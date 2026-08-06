@@ -17,7 +17,7 @@ Build a bilingual documentation site for an educational Sail workspace. The site
 3. Understand the Hack ISA before reading implementation code.
 4. Follow assembly source through machine code and native execution.
 5. Find exact module commands and source directives.
-6. Add or maintain an ISA module using the shared [Sail modeling conventions](../SAIL_MODELING.md), without coupling it to Hack internals.
+6. Add or maintain an ISA module using the shared [Sail modeling conventions](../sail/MODELING.md), without coupling it to Hack internals.
 
 ## Constraints
 

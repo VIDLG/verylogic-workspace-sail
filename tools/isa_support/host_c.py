@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
 from .process import run_checked
 
 SAIL_RUNTIME_SOURCES = ("rts", "elf", "sail", "sail_config", "sail_failure", "cJSON")
+_THROW_LOCATION_ASSIGNMENT = re.compile(
+    r'(?P<prefix>COPY\(sail_string\)\(throw_location, ")'
+    r'(?P<location>[^"\r\n]*)'
+    r'(?P<suffix>"\);)'
+)
+
+
+def normalize_sail_c_throw_locations(generated_c: Path) -> None:
+    source = generated_c.read_text(encoding="utf-8")
+    normalized = _THROW_LOCATION_ASSIGNMENT.sub(
+        lambda match: (
+            match.group("prefix")
+            + match.group("location").replace("\\", "/")
+            + match.group("suffix")
+        ),
+        source,
+    )
+    if normalized != source:
+        generated_c.write_text(normalized, encoding="utf-8", newline="\n")
 
 
 def host_c_compiler() -> str:
@@ -26,6 +46,10 @@ def compile_sail_generated_c(
     sail_lib = sail_executable.parent.parent / "share/sail/lib"
     if not sail_lib.is_dir():
         raise OSError(f"Sail C runtime not found: {sail_lib}")
+
+    # Sail 0.20.2 emits Windows exception locations as unescaped C strings.
+    # Forward slashes preserve the diagnostic path while keeping generated C valid.
+    normalize_sail_c_throw_locations(generated_c)
 
     compat_header = workspace_root / "support/sail_windows_compat.h"
     compat_source = workspace_root / "support/sail_windows_compat.c"

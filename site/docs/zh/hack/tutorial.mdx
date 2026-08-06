@@ -2,7 +2,7 @@
 
 [Hack 概览](/zh/hack/) · [English](/hack/tutorial) · [下一篇：Hack ISA →](/zh/hack/isa)
 
-这是一个面向学习的、可执行的 [Hack](https://www.nand2tetris.org/) 指令集模型。项目用 [Sail](https://github.com/rems-project/sail) 描述 Hack CPU 的指令编码、ALU、寄存器、内存与控制流，再通过 Sail 的 C 后端把汇编程序编译成可运行程序。
+这是一个面向学习的、可执行的 [Hack](https://www.nand2tetris.org/) ISA family 模型。默认 `hack16` 是 canonical nand2tetris 机器，`hack32` 是 32 位 Verylogic 扩展；共享 [Sail](https://github.com/rems-project/sail) 语义描述 ALU、寄存器、内存与控制流，再通过 Sail C 后端运行真实 Hack 汇编程序。
 
 如果 nand2tetris 教你“怎样从 NAND 门搭出一台计算机”，这个仓库关注的是紧接着的一层：
 
@@ -44,7 +44,7 @@
 
 读完并运行本项目后，你应该能回答：
 
-1. Hack 的两种指令如何编码为 16 位机器字？
+1. Hack 的两种指令如何编码为 `hack16` 与 `hack32` 机器字？
 2. `A`、`D`、`PC` 和 RAM 构成了哪些可观察的架构状态？
 3. C 指令中的 `a`、`comp`、`dest`、`jump` 字段如何共同决定一次状态转换？
 4. 为什么同时写入 `A` 与 `M` 或发生跳转时，内存地址和跳转目标必须使用旧的 `A`？
@@ -74,10 +74,11 @@ pixi run just hack check
 
 ```sh
 pixi run just hack list
-pixi run just hack run multiply
+pixi run just hack run multiply                    # 默认 hack16
+pixi run just hack run multiply --profile hack32
 ```
 
-`multiply` 使用重复加法计算 `6 × 7`。源码在 [`isa/hack/programs/multiply.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/multiply.asm)：
+下面示例继续使用默认 `hack16`；`hack32` 经过相同源码流程，但机器字为 32 位，状态十六进制输出也更宽。`multiply` 使用重复加法计算 `6 × 7`。源码在 [`isa/hack/programs/multiply.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/multiply.asm)：
 
 ```asm
 .description Repeated-addition multiplication: 6 times 7
@@ -101,7 +102,7 @@ HALT
 .assert R2 == 42
 ```
 
-`SET`、`JEQ target, label`、`DEC`、`GOTO` 和 `HALT` 是仓库汇编器提供的 **Hack+ 伪指令**。汇编器先把它们替换成标准 Hack 指令，再进行标签解析与机器码编码。例如：
+`SET`、`JEQ target, label`、`DEC`、`GOTO` 和 `HALT` 是仓库汇编器提供的 **Hack+ 伪指令**。汇编器先把它们替换成 canonical A/C 汇编，再进行标签解析，并按所选 profile 生成机器字。例如：
 
 ```asm
 // SET R0, 6
@@ -154,7 +155,7 @@ pixi run just hack run multiply full
 
 默认的 `summary` 为每个 A/C 机器字显示规范化源码，把 Hack+ 展开标为 `[i/n] 源伪指令 => 正式指令`，并将行内汇编注释放在最右侧。显式选择 `full` 后，会保留精确源码文本，并增加更多 driver 阶段和断言解释；
 
-输出位于 `isa/hack/.build/multiply.hack`。每条指令仍是标准的 16 位 Hack 机器字，只额外保留 ROM 地址、源码行和伪指令展开信息：
+默认输出位于 `isa/hack/.build/hack16/asm/multiply/multiply.hack`，每条指令仍是标准 16 位 Hack 机器字，只额外保留 ROM 地址、源码行和伪指令展开信息。`--profile hack32` 则把 32 位 artifact 写入 `.build/hack32/asm/multiply/`：
 
 ```text
 0000000000000110 // ROM[0000] L5 [1/4] SET R0, 6 => @6 // RAM[0] = 被乘数
@@ -163,102 +164,21 @@ pixi run just hack run multiply full
 
 这一步很适合把教材中的编码表、汇编源码和 Sail 解码规则放在一起对照。
 
-## 跟着 `hack.sail` 读一遍处理器
+## 跟着 profile 模型读一遍处理器
 
-核心模型只有一百行左右，位于 [`isa/hack/hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail)。建议按下面的顺序阅读。
+当前模型按责任拆分，建议依次阅读：
 
-### 第一步：定义机器字与指令编码
+1. 从 `model/profiles/hack16.sail` 开始：先看 profile 位宽与合法性，再沿 include 进入共享 core；
+2. [`model/core.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/model/core.sail)：instruction/exception 类型、架构状态、total 64-control ALU、fetch/decode/encode/execute 和 `hack_step()`；
+3. 回到 `hack16.sail` 底部阅读 scattered A/C mapping clauses，再与 `hack32.sail` 的 C envelope 对比；
+4. 查看 `projects/hack16.sail_project` 与 `projects/hack32.sail_project`：每个完整构建闭包都只指向自己的一个 profile 入口。
 
-```ocaml
-type word = bits(16)
-type address = bits(15)
-type input_selector = bit
-type alu_control = bits(6)
-type destination_control = bits(3)
-type jump_control = bits(3)
+| Profile | 机器字/`A`/`D` | A 指令 | C 指令 |
+| --- | ---: | --- | --- |
+| `hack16` | 16 位 | `0` + 15 位立即数 | `111accccccdddjjj` |
+| `hack32` | 32 位 | `0` + 31 位立即数 | `0xFFFF` + `111accccccdddjjj` |
 
-union instruction = {
-  AInstruction : address,
-  CInstruction : (input_selector, alu_control, destination_control, jump_control)
-}
-
-mapping encdec : instruction <-> word = {
-  AInstruction(value) <-> 0b0 @ value,
-  CInstruction(a, comp, dest, jump) <-> 0b111 @ a @ comp @ dest @ jump
-}
-
-union hack_decode_result = {
-  Decoded : instruction,
-  DecodeIllegal : word
-}
-
-function decode_hack(encoded : word) -> hack_decode_result = {
-  match encoded[15] {
-    0b0 => Decoded(encdec(encoded)),
-    0b1 => {
-      match encoded[14 .. 13] {
-        0b11 => Decoded(encdec(encoded)),
-        _ => DecodeIllegal(encoded)
-      }
-    }
-  }
-}
-
-function encode_hack(instr : instruction) -> word = encdec(instr)
-```
-
-Hack 只有两种机器指令：
-
-| 指令 | 16 位编码 | 作用 |
-| --- | --- | --- |
-| A 指令 | `0vvvvvvvvvvvvvvv` | 把 15 位值装入 `A` |
-| C 指令 | `111accccccdddjjj` | 计算 ALU、写回目标，并可按条件跳转 |
-
-命名位向量类型让每个 C 指令字段的角色直接可见，同时不改变原始编码。紧凑的 `encdec` mapping 同时表达合法 A/C 编码的两个方向；`decode_hack` 再显式检查合法性：合法前缀调用 `encdec`，`100/101/110` 则在 `DecodeIllegal` 中保留原始机器字。`execute` 只接收已解码的 `instruction`，不负责编码或解码。
-
-### 第二步：声明架构状态
-
-```ocaml
-register A : word = 0x0000
-register D : word = 0x0000
-register PC : program_counter = 0b000000000000000
-register RAM : vector(32768, word) = vector_init(32768, 0x0000)
-```
-
-模型包含两个 16 位寄存器、一个 15 位程序计数器，以及 `32768 × 16` 位 RAM。A 指令只更新 `A` 和 `PC`；C 指令读取 `D` 与 `A` 或 `RAM[A]`，再决定写回和跳转。
-
-### 第三步：把 `comp` 字段写成 ALU 语义
-
-`alu(comp, x, y)` 对所有官方 `comp` 模式逐项匹配，例如：
-
-```ocaml
-0b101010 => 0x0000,              // 0
-0b001100 => x,                   // D
-0b000010 => add_bits(x, y),      // D + A or D + M
-0b010011 => sub_bits(x, y),      // D - A or D - M
-0b010101 => x | y                // D | A or D | M
-```
-
-C 指令的 `a` 位决定 `y` 来自 `A` 还是 `RAM[A]`。`jump` 的 3 位编码则由 `should_jump` 根据 ALU 输出的零值和符号位判断。
-
-### 第四步：理解一次状态转换
-
-`execute` 是模型的中心。C 指令分支先保存 `old_a`：
-
-```ocaml
-let old_a = A;
-let y = if a == 0b0 then A else RAM[unsigned(ram_address(A))];
-let out = alu(comp, D, y);
-```
-
-随后按照 `dest` 位写入 `A`、`D`、`M`，最后更新 `PC`。这里最值得注意的是：
-
-```ocaml
-RAM[unsigned(ram_address(old_a))] = out
-PC = ram_address(old_a)
-```
-
-当同一条 C 指令既改变 `A` 又写 `M`，或者同时改变 `A` 并跳转时，内存地址与跳转目标仍由该指令开始执行时的 `A` 决定。保存 `old_a` 明确表达了这条容易写错的时序规则。
+两个 profile 都使用 15 位 `PC`、各 32768 word 的 ROM/RAM，并以旧 `A[14:0]` 完成 RAM 写入和跳转。`hack32` 的 `A` 高位仍参与 32 位 ALU 运算。汇编器只暴露 canonical nand2tetris `comp` mnemonic，而共享门级 control ALU 定义六位 control 的全部 64 种结果。
 
 ## 从汇编到可执行程序
 
@@ -268,13 +188,13 @@ PC = ram_address(old_a)
 programs/*.asm
   │  两遍汇编 + Hack+ 展开
   ▼
-.build/<program>.hack
+.build/<profile>/asm/<program>/<program>.hack
   │  重新加载机器字、断言和 HALT 元数据
   ▼
-生成的 .driver.sail + hack.sail
+生成的 .driver.sail + projects/<profile>.sail_project
   │  Sail 类型检查与 C 后端
   ▼
-.build/<program>.exe
+.build/<profile>/asm/<program>/<program>.exe
   │  执行到 HALT 或步数上限；离开已加载映像会报错
   ▼
 检查源码中的 .assert
@@ -284,27 +204,28 @@ programs/*.asm
 
 各部分职责：
 
-- [`isa/hack/hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail)：Hack ISA 的可执行语义；
+- `isa/hack/model/` 与 `projects/*.sail_project`：共享语义与 profile composition；
 - `isa/hack/tools/assembler.py`：两遍汇编、Hack+ 展开、带注释机器码；
 - `isa/hack/tools/executor.py`：生成 Sail driver，调用 C 后端并执行；
 - `isa/hack/programs/*.asm`：示例与端到端回归程序；
-- [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail)：直接验证 ALU、跳转、写回与状态转换；
+- `isa/hack/tests/sail/<profile>/conformance.sail`：直接验证 profile 编码、ALU、跳转、写回与状态转换；
 - `isa/hack/tests/`：汇编器和执行器的 Python 测试。
 
 ## 建议的学习实验
 
 ### 实验一：对照 A/C 指令编码
 
-1. 阅读 `encdec`、`decode_hack` 和 `encode_hack`；
+1. 阅读所选 profile 的 mapping clauses，编码时直接使用 `encdec(instruction)`，再沿 include 查看 `model/core.sail` 中负责合法性检查的 `decode_hack`；
 2. 写一小段标准 Hack 汇编；
 3. 执行 `pixi run just hack assemble <程序名>`；
-4. 对照 `.hack` 中的 16 位机器字和 Project 06 的编码表。
+4. 先把默认 `hack16` 产物中的 16 位机器字与 Project 06 编码表对照，再观察 `hack32` 如何用 32 位 envelope 承载同一组 C 指令控制字段。
 
 ### 实验二：增加一个 ALU 回归用例
 
-在 [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail) 的 `test_alu()` 中增加断言，然后运行：
+在对应 `tests/sail/<profile>/conformance.sail` 中增加断言，先运行窄检查，再运行完整测试：
 
 ```sh
+pixi run just hack check --profile hack32
 pixi run just hack test
 ```
 
@@ -337,7 +258,7 @@ pixi run just hack test
 - Hack+ 只是汇编器便利语法，不是 Hack ISA 的扩展；
 - 执行路径使用 Sail C 后端，不对模型作已完成形式化证明的声明。
 
-如果你想学习“门怎样组成 CPU”，先做 nandgame 或 nand2tetris Projects 01–05；如果你想学习“怎样精确描述 CPU 执行指令”，就从本仓库的 `hack.sail` 开始。
+如果你想学习“门怎样组成 CPU”，先做 nandgame 或 nand2tetris Projects 01–05；如果你想学习“怎样精确描述 CPU 执行指令”，就从一个 profile 入口开始，沿 include 进入 `model/core.sail`，再回到该 profile 的 mapping clauses。
 
 ## 延伸资源
 

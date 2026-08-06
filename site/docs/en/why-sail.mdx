@@ -108,7 +108,7 @@ RTL is the right answer to “how is this processor built?” It is a poor sole 
 
 ### Sail: almost every line is a machine rule
 
-The actual `hack.sail` model saves old state and then makes each write explicit:
+The shared [`model/core.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/model/core.sail) model saves old state and then makes each write explicit:
 
 ```ocaml
 let old_a = A;
@@ -183,7 +183,7 @@ When one core's RTL stands in for the ISA specification, a student often sees pi
 
 ### Sail: encoding, types, and behavior share one language
 
-The Sail project's RISC-V example first defines an instruction form and connects it to a 32-bit machine word:
+The upstream Sail project's RISC-V example first defines an instruction form and connects it to a 32-bit machine word:
 
 ```ocaml
 union clause ast = ITYPE : (bits(12), regbits, regbits, iop)
@@ -217,6 +217,8 @@ The surrounding model still defines `xlenbits`, `X`, and `EXTS`. The difference 
 - `encdec` makes instruction structure and machine encoding one checked relationship.
 
 The reader mostly sees RISC-V rather than a host language or one core's organization.
+
+That upstream example demonstrates Sail's bidirectional `mapping` feature. This workspace uses mappings when the legal encoding is a compact bijection, as in Hack, and wraps them with an explicit decode `match` when illegal prefixes must remain visible. More complex models such as RV32I use separate decode/encode functions.
 
 ## What the two examples show
 

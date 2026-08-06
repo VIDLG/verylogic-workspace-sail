@@ -7,6 +7,7 @@ from isa.hack.tools import executor
 from isa.hack.tools.artifact import LoadedHack, create_hack_manifest, load_hack
 from isa.hack.tools.assembler import AssemblyMetadata, Assertion
 from isa.hack.tools.executor import artifact_path, write_driver
+from isa.hack.tools.profiles import get_profile
 
 
 def loaded_hack(
@@ -15,16 +16,19 @@ def loaded_hack(
     word_comments: tuple[str | None, ...] = (),
     *,
     comments: str = "summary",
+    profile_name: str = "hack16",
 ) -> LoadedHack:
+    profile = get_profile(profile_name)
     return LoadedHack(
+        profile,
         words,
         metadata,
         word_comments,
-        create_hack_manifest(metadata, comments),
+        create_hack_manifest(profile, metadata, comments),
     )
 
 
-def create_staged_closure(output: Path, _driver: Path) -> None:
+def create_staged_closure(_profile: object, output: Path, _driver: Path) -> None:
     artifact_path(output, ".c").write_text("generated C\n", encoding="utf-8")
     artifact_path(output, ".h").write_text("generated H\n", encoding="utf-8")
     executable = artifact_path(output, ".exe") if os.name == "nt" else output
@@ -40,8 +44,8 @@ def test_driver_rejects_pc_at_or_beyond_rom_end(tmp_path: Path) -> None:
     generated = driver.read_text(encoding="utf-8")
     assert "function load_program() -> unit" in generated
     assert "ROM[0] = 0b0000000000000000" in generated
-    assert "match hack_step()" in generated
-    assert "HackIllegalInstruction(_) => assert(false" in generated
+    assert "    hack_step();" in generated
+    assert "HackIllegalInstruction" not in generated
     assert "instruction_at" not in generated
     assert "decode_hack(" not in generated
     assert "function run_hack_step" not in generated
@@ -58,6 +62,19 @@ def test_driver_rejects_pc_at_or_beyond_rom_end(tmp_path: Path) -> None:
         in generated
     )
     assert 'print_endline("ASSERT PASS")' in generated
+
+
+def test_hack32_driver_uses_profile_word_width_and_assertions(tmp_path: Path) -> None:
+    metadata = AssemblyMetadata(assertions=(Assertion("A", 0xFFFFFFFF, 1),))
+    program = loaded_hack([0x0000002A, 0xFFFFE308], metadata, profile_name="hack32")
+    driver = tmp_path / "hack32.driver.sail"
+
+    write_driver(program, driver, tmp_path / "hack32.hack")
+
+    generated = driver.read_text(encoding="utf-8")
+    assert "ROM[0] = 0b00000000000000000000000000101010" in generated
+    assert "ROM[1] = 0b11111111111111111110001100001000" in generated
+    assert "A == 0xFFFFFFFF" in generated
 
 
 def test_driver_comment_levels_control_teaching_annotations(tmp_path: Path) -> None:
@@ -78,10 +95,7 @@ def test_driver_comment_levels_control_teaching_annotations(tmp_path: Path) -> N
     assert "Load raw machine words into the model-owned ROM" in contents["summary"]
     assert "Return whether another instruction attempt may begin" in contents["summary"]
     assert "Load the ROM, run while another attempt is allowed" in contents["summary"]
-    assert (
-        "Check the model-owned fetch, decode, and execute outcome"
-        in contents["summary"]
-    )
+    assert "Run one model-owned fetch, decode, and execute step" in contents["summary"]
     assert "ROM[0000] L2: @0" in contents["summary"]
     assert "Source line 3: .assert A == 0x0000" not in contents["summary"]
     assert "Source line 3: .assert A == 0x0000" in contents["full"]
@@ -232,9 +246,9 @@ def test_cli_overrides_are_serialized_before_reload(
     source.write_text(".max_steps 9\n@0\nHALT\n", encoding="utf-8")
     compiled: list[tuple[Path, Path]] = []
 
-    def capture_compile(output: Path, driver: Path) -> None:
+    def capture_compile(_profile: object, output: Path, driver: Path) -> None:
         compiled.append((output, driver))
-        create_staged_closure(output, driver)
+        create_staged_closure(_profile, output, driver)
 
     monkeypatch.setattr(executor, "compile_and_run", capture_compile)
 
@@ -244,7 +258,7 @@ def test_cli_overrides_are_serialized_before_reload(
     assert artifact.metadata.max_steps == 3
     assert artifact.metadata.max_steps_origin == "cli"
     assert len(compiled) == 1
-    assert compiled[0][1].name == "output.driver.sail"
+    assert compiled[0][1].name == "output.driver.sail_project"
     generated = (tmp_path / "output.driver.sail").read_text(encoding="utf-8")
     assert "let driver_max_steps : int = 3" in generated
 
@@ -294,6 +308,7 @@ def test_failed_staged_run_preserves_previous_successful_closure(
     final = (
         artifact_path(output, ".hack"),
         artifact_path(output, ".driver.sail"),
+        artifact_path(output, ".driver.sail_project"),
         artifact_path(output, ".c"),
         artifact_path(output, ".h"),
         artifact_path(output, ".exe") if os.name == "nt" else output,
@@ -301,7 +316,7 @@ def test_failed_staged_run_preserves_previous_successful_closure(
     for path in final:
         path.write_text(f"old {path.name}\n", encoding="utf-8")
 
-    def fail_compile(staged_output: Path, _driver: Path) -> None:
+    def fail_compile(_profile: object, staged_output: Path, _driver: Path) -> None:
         artifact_path(staged_output, ".c").write_text("partial\n", encoding="utf-8")
         raise OSError("host compile failed")
 

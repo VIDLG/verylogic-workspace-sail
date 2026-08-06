@@ -2,46 +2,56 @@
 
 [中文](README.zh-CN.md) · [Documentation overview](https://vidlg.github.io/verylogic-workspace-sail/hack/) · [Tutorial](https://vidlg.github.io/verylogic-workspace-sail/hack/tutorial) · [ISA guide](https://vidlg.github.io/verylogic-workspace-sail/hack/isa)
 
-This module implements the nand2tetris Hack instruction set in Sail and provides the tools needed to assemble, execute, and test Hack programs.
+This module implements the `hack` ISA family in Sail: `hack16` is the canonical nand2tetris baseline, and `hack32` is a 32-bit Verylogic extension. Both retain a 15-bit PC/address space and 32768-word ROM and RAM.
+
+| Profile | Instruction/data word | A immediate | C encoding |
+| --- | ---: | ---: | --- |
+| `hack16` | 16 bits | 15 bits | `111accccccdddjjj` |
+| `hack32` | 32 bits | 31 bits | `0xFFFF` followed by `111accccccdddjjj` |
+
+In `hack32`, upper `A` data bits participate in the 32-bit ALU, while RAM access and jumps use only old `A[14:0]`. Its 32-bit words are **not** ordinary nand2tetris `.hack` binary compatibility even when the assembly mnemonics match.
 
 ## Quick commands
 
 Run from the repository root:
 
 ```sh
-pixi run just hack list                  # List programs/*.asm
-pixi run just hack check                 # Type-check hack.sail
-pixi run just hack assemble multiply     # Write summary-annotated .build/multiply.hack
+pixi run just hack list                                  # List programs/*.asm
+pixi run just hack check                                 # Check hack16 and hack32
+pixi run just hack check --profile hack32                # Check one profile
+pixi run just hack assemble multiply                     # Defaults to hack16
+pixi run just hack assemble multiply --profile hack32
 pixi run just hack assemble multiply summary --max-steps 10000
-pixi run just hack a multiply full       # Short alias; request full annotations
-pixi run just hack run multiply none     # Build without explanatory comments
-pixi run just hack r multiply            # Short alias for run
-pixi run just hack run multiply summary --max-steps 10000
-pixi run just hack test                  # Unit tests + every program end to end
-pixi run just hack clean                 # Remove generated artifacts
+pixi run just hack run multiply none                     # Build without explanatory comments
+pixi run just hack run multiply --profile hack32
+pixi run just hack test                                  # Test both profiles
+pixi run just hack clean                                 # Remove generated artifacts
 ```
 
 ## Module map
 
 | Path | Purpose |
 | --- | --- |
-| `hack.sail` | Canonical nand2tetris Hack 16-bit ISA model: ROM storage, raw-word fetch, A/C decoding, typed stepping, ALU, registers, RAM, and PC transitions |
+| `model/core.sail` | Shared instruction/exception types, ALU/state, fetch/decode/encode/execute/step, and the scattered `encdec` declaration |
+| `model/profiles/hack16.sail` / `hack32.sail` | Single profile entries: widths, legality, shared-core include, and profile-specific A/C mapping clauses |
+| `projects/*.sail_project` | One-file build closures for `hack16` and `hack32` |
 | `programs/*.asm` | Runnable examples and end-to-end regressions |
 | `tools/assembler.py` | Pure library for Hack parsing, symbol resolution, encoding, shared-directive integration, and Hack+ lowering |
 | `tools/assembler_cli.py` | Thin CLI boundary for argument handling, runtime overrides, and strict artifact publication |
 | `tools/artifact.py` | Manifest creation, annotated `.hack` write/load, strict Hack validation, and runtime overrides |
 | `tools/executor.py` | Driver generation, staged Sail/host-C compilation, execution, and artifact-closure publication |
 | `tools/workflow.py` | Program discovery and command dispatch |
-| `tests/` | Assembler, executor, workflow, and Sail conformance tests |
-| `.build/` | Git-ignored machine code, driver, C, and executable artifacts |
+| `tests/` | Assembler, executor, workflow, and `tests/sail/<profile>/` conformance tests |
+| `.build/<profile>/asm/<program>/` | Git-ignored per-program artifact closure for the direct assembly frontend |
+| [`.design/hack/PROFILES.md`](../../.design/hack/PROFILES.md) | Architecture contract, legality, file boundaries, artifact identity, and test gates |
 
 ## Execution boundary
 
-The Sail model owns `ROM : vector(32768, word)`. `fetch_hack(pc)` returns the raw 16-bit word at `pc`, and `hack_step()` composes fetch → `decode_hack` → execute while returning a typed result. The model, not Python, therefore owns all A/C decoding.
+The selected Sail profile owns `ROM : vector(32768, word)`. `fetch_hack(pc)` returns the raw profile-width word at `pc`, and `hack_step()` composes fetch → `decode_hack` → execute. A legal step returns `unit`; an illegal word makes `decode_hack` throw `HackIllegalInstruction(word)` before `execute` begins. The model, not Python, therefore owns all A/C decoding. `hack16` uses 16-bit instruction/data words, while `hack32` uses 32-bit words.
 
-The generated driver emits `load_program()` with raw `ROM[index] = word` assignments and optional source comments; it does not generate `instruction_at`, `execute_at`, or an address-to-decode match. A small `execution_should_continue(pc, steps)` helper centralizes the HALT-metadata, image-boundary, and step-budget conditions, while generated `main()` directly matches each `hack_step()` result and validates why the loop stopped. Reaching HALT metadata is valid completion, leaving the loaded image is an explicit error, and exhausting the default 100000-step watchdog is a failure. These completion, watchdog, assertion, and final-output policies remain driver responsibilities because standard Hack has no architectural HALT instruction.
+The generated driver emits `load_program()` with raw `ROM[index] = word` assignments and optional source comments; it does not generate `instruction_at`, `execute_at`, or an address-to-decode match. A small `execution_should_continue(pc, steps)` helper centralizes the HALT-metadata, image-boundary, and step-budget conditions, while generated `main()` directly calls `hack_step()` and validates why the loop stopped. Reaching HALT metadata is valid completion, leaving the loaded image is an explicit error, and exhausting the default 100000-step watchdog is a failure. These completion, watchdog, assertion, and final-output policies remain driver responsibilities because standard Hack has no architectural HALT instruction.
 
-`run` stages the complete build in a temporary directory: assemble → strict `.hack` reload → driver → Sail C → host compile → execute. Only after successful execution does it publish `.hack`, `.driver.sail`, `.c`, `.h`, and the executable as one artifact closure. Assembly, compilation, assertion, or execution failure therefore leaves the previous successful closure untouched.
+`run` stages the complete build in a temporary directory: assemble → strict `.hack` reload → driver → Sail C → host compile → execute. Only after successful execution does it publish `.hack`, `.driver.sail`, `.driver.sail_project`, `.c`, `.h`, and the executable as one artifact closure under `.build/<profile>/asm/<program>/<program>.*`. Assembly, compilation, assertion, or execution failure therefore leaves the previous successful closure untouched.
 
 ## Artifact comment levels
 
@@ -61,7 +71,7 @@ pixi run just hack assemble multiply full
 pixi run just hack run multiply full
 ```
 
-Every generated annotated machine image `.hack` begins with one contiguous machine-readable `//%` public manifest block. At `summary` and `full`, the canonical S-expression is indented across multiple consecutive prefixed lines; at `none`, the same form is one compact prefixed line. The manifest records schema/version, ISA/profile, source kind/path, description, comment level, resolved `max_steps` value/origin, assertions, completion, and Hack metadata. Direct Hack assembly has no extra frontend transformation lineage, so empty `provenance` is omitted. `completion` is explicitly `lowered_self_loop` with word addresses. Human preamble lines disappear at `none`, but the manifest block remains. Driver configuration and comments are recovered only after strict `.hack` reload rather than from hidden assembler state.
+Every generated annotated machine image `.hack` begins with one contiguous machine-readable `//%` public manifest block. At `summary` and `full`, the canonical S-expression is indented across multiple consecutive prefixed lines; at `none`, the same form is one compact prefixed line. The manifest records schema/version, ISA/profile, source kind/path, description, comment level, resolved `max_steps` value/origin, assertions, completion, and Hack metadata. Its identity is always `isa=hack` with `profile=hack16` or `profile=hack32`; `standard` is never a valid profile. Direct Hack assembly has no extra frontend transformation lineage, so empty `provenance` is omitted. `completion` is explicitly `lowered_self_loop` with word addresses. Human preamble lines disappear at `none`, but the manifest block remains. Driver configuration and comments are recovered only after strict `.hack` reload rather than from hidden assembler state.
 
 Manifest v1 uses exact public and Hack-specific shapes. The loader validates canonical assertion targets and ranges, equality/ordered modes, display spelling, safe normalized source paths, metadata constants, the comment-level-specific manifest layout, and that every completion address points at the actual lowered `@address; 0;JMP` words. `load_hack()` accepts only this strict annotated format.
 
@@ -131,10 +141,12 @@ Operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`. The shared directive contrac
 
 | Syntax | Meaning | RHS range |
 | --- | --- | --- |
-| `.assert target == value` / `!=` | Bit-exact, unwrapped comparison | Word: `-32768..65535`; `PC`: `0..32767` |
-| `.assert signed(target) op value` | Explicit signed ordered comparison | `-32768..32767` |
-| `.assert unsigned(target) op value` | Explicit unsigned ordered comparison | `0..65535` |
+| `.assert target == value` / `!=` | Bit-exact, unwrapped comparison | Word: `-2^(W-1)..2^W-1`; `PC`: `0..32767` |
+| `.assert signed(target) op value` | Explicit signed ordered comparison | `-2^(W-1)..2^(W-1)-1` |
+| `.assert unsigned(target) op value` | Explicit unsigned ordered comparison | `0..2^W-1` |
 | `.assert unsigned(PC) op value` | Explicit unsigned 15-bit ordered comparison | `0..32767` |
+
+Here `W=16` for `hack16` and `W=32` for `hack32`.
 
 ### Success
 
@@ -198,7 +210,7 @@ A future initial-state/input facility should follow the dual pattern—for examp
 | `JNZ/JNE/JGT/JEQ/JGE/JLT/JLE target, label` | Read `RAM[target]` and branch |
 | `HALT` | Emit a private two-instruction self-loop and record completion |
 
-Hack+ lowers completely to standard Hack A/C instructions before label collection; it does not extend the ISA. For a pseudoinstruction that lowers to `n` real instructions, annotated artifacts mark each machine word as `[1/n]` through `[n/n]`; ordinary A/C instructions have no expansion marker. Complete expansions and register side effects are documented in [Hack+ lowering](https://vidlg.github.io/verylogic-workspace-sail/hack/isa#how-hack-lowers-to-real-instructions).
+Hack+ lowers completely to canonical A/C assembly before label collection; it does not add another instruction form. `hack16` encodes standard nand2tetris words, while `hack32` encodes the same fields with its widened profile layout. For a pseudoinstruction that lowers to `n` real instructions, annotated artifacts mark each machine word as `[1/n]` through `[n/n]`; ordinary A/C instructions have no expansion marker. Complete expansions and register side effects are documented in [Hack+ lowering](https://vidlg.github.io/verylogic-workspace-sail/hack/isa#how-hack-lowers-to-real-instructions).
 
 ## Learn the implementation
 

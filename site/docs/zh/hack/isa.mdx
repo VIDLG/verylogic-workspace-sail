@@ -2,7 +2,7 @@
 
 [← 入门教程](/zh/hack/tutorial) · [Hack 概览](/zh/hack/) · [English](/hack/isa) · [汇编器内部原理 →](/zh/hack/assembler)
 
-本文只讲 **Hack ISA 本身**：软件能够看到什么状态、机器指令怎样编码，以及一条指令怎样改变状态。运行命令、断言和 `.hack` 元数据等工具规则见 [Hack 包参考手册](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md)。
+本文只讲 **Hack ISA 本身**：软件能够看到什么状态、机器指令怎样编码，以及一条指令怎样改变状态。详细位图以默认 `hack16` profile 为基线，profile 差异会显式标出。运行命令、断言和 `.hack` 元数据等工具规则见 [Hack 包参考手册](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.zh-CN.md)。
 
 ## ISA 到底是什么
 
@@ -19,28 +19,28 @@ ISA 不规定加法器由多少个 NAND 门组成、信号需要多久稳定，�
 
 | 层次 | 示例 | 是否属于 Hack ISA |
 | --- | --- | --- |
-| 16 位机器指令 | `0000000000000010`、`1110001100001000` | 是 |
+| Profile 机器指令 | `hack16` 为 16 位；`hack32` 为 32 位 | 是 |
 | 标准 Hack 汇编 | `@2`、`M=D`、`D;JGT` | 是机器指令的文本表示 |
 | 标签与符号 | `(LOOP)`、`@R0`、`@variable` | 汇编器语法，不是 CPU 指令 |
 | Hack+ 伪指令 | `SET`、`JEQ target,label`、`HALT` | 本项目的汇编便利语法，不属于 ISA |
 | 测试指令 | `.assert`、`.max_steps` | 本项目的执行元数据，不进入 ROM |
-| Sail 模型 | `hack.sail` | 对 ISA 语义的可执行描述 |
+| Sail 模型 | 共享 `model/*.sail` 加 profile 文件/project | 对 ISA 语义的可执行描述 |
 
-最终送给 Hack CPU 的始终只有 16 位 A 指令或 C 指令。
+最终送给模型 CPU 的始终只有所选 profile 的 A 指令或 C 指令。命令默认选择 `hack16`，`--profile hack32` 选择扩展。
 
 ## 体系结构概览
 
-Hack 是一台 16 位、采用分离指令存储和数据存储的教学计算机。程序从 ROM 取指，数据从 RAM 读写；这通常称为 Harvard 结构。
+两个 profile 都采用分离的指令存储和数据存储：程序从 ROM 取指，数据从 RAM 读写；这通常称为 Harvard 结构。它们共享 15 位 PC/地址空间，但机器字宽度不同。
 
 ### 架构状态
 
-| 状态 | 宽度 | 作用 | Sail 表示 |
-| --- | ---: | --- | --- |
-| `A` | 16 位 | 地址/数据寄存器；为 `M` 和跳转提供地址 | `register A : word` |
-| `D` | 16 位 | 通用数据寄存器；作为 ALU 的固定输入 | `register D : word` |
-| `PC` | 15 位 | 下一条 ROM 指令的地址 | `register PC : program_counter` |
-| RAM | 32768 × 16 位 | 数据地址空间 | `register RAM : vector(32768, word)` |
-| ROM | 32768 × 16 位 | 程序机器字 | `register ROM : vector(32768, word)`；由 driver 加载、模型取指 |
+| 状态 | `hack16` | `hack32` | 作用 |
+| --- | ---: | ---: | --- |
+| `A` | 16 位 | 32 位 | 地址/数据寄存器；`M` 和跳转使用低 15 位地址 |
+| `D` | 16 位 | 32 位 | 通用数据寄存器；作为 ALU 的固定输入 |
+| `PC` | 15 位 | 15 位 | 下一条 ROM 指令的地址 |
+| RAM | 32768 × 16 位 | 32768 × 32 位 | 数据地址空间 |
+| ROM | 32768 × 16 位 | 32768 × 32 位 | 程序机器字；由 driver 加载、模型取指 |
 
 汇编语言中的 `M` **不是独立寄存器**，而是当前 A 地址指向的内存：
 
@@ -50,7 +50,7 @@ M ≡ RAM[A[14:0]]
 
 标准汇编器符号 `R0..R15` 是 `RAM[0]..RAM[15]` 的别名，不是额外的架构寄存器。例如，`@R3` 把地址 `3` 装入 `A`，后续 `D=M` 读取的就是 `RAM[3]`。
 
-`A` 本身是 16 位，但内存地址和跳转目标只使用它的低 15 位。A 指令只能装入 `0..32767`；C 指令写回 `A` 时则可能产生任意 16 位值。
+`hack16` 的 `A` 为 16 位，A 指令携带 15 位立即数；`hack32` 的 `A` 为 32 位，A 指令携带 31 位立即数。两个 profile 的 RAM 地址与跳转目标都只使用 `A[14:0]`；`hack32` 的 `A` 高位仍参与 32 位 ALU 数据运算。
 
 ### Hack 平台的内存映射
 
@@ -66,7 +66,7 @@ Sail 模型把全部 `0..32767` 地址实现为普通 RAM。**指令寻址规则
 
 ## 机器指令格式
 
-Hack 的机器字固定为 16 位，并且只有两类指令。
+每个 profile 都只有 A、C 两类指令。下面位图展示 canonical 16 位 `hack16` 布局；`hack32` 在更宽的编码中复用同一组 C 字段。
 
 ### A 指令
 
@@ -96,7 +96,7 @@ PC := (PC + 1) mod 32768
 0000000000101010
 ```
 
-A 指令中的值可以是十进制数或符号。符号解析是汇编器的工作；CPU 只看到最终的 15 位数值。
+A 指令中的值可以是十进制数或符号，符号解析由汇编器完成。`hack16` 编码 `0` 加 15 位立即数；`hack32` 编码 `0` 加 31 位立即数。
 
 ### C 指令
 
@@ -119,13 +119,13 @@ A 指令中的值可以是十进制数或符号。符号解析是汇编器的工
 - `dest`：结果写入 `A`、`D`、`M` 中的哪些位置；
 - `jump`：是否把 `PC` 改为旧 `A` 指定的地址。
 
-`dest` 和 `jump` 可以省略，但 `comp` 必须存在。
+`dest` 和 `jump` 可以省略，但 `comp` 必须存在。`hack32` 把上面的 16 位 C 布局放在机器字低半部，高半部固定为 `0xFFFF`，完整编码为 `1111111111111111 111accccccdddjjj`。
 
 ## `comp`：ALU 运算
 
 ALU 的固定输入 `x` 是 `D`。`a=0` 时 `y=A`，`a=1` 时 `y=M=RAM[A]`。
 
-下表列出标准 Hack 汇编器接受的规范编码。`—` 表示该组合没有规范汇编写法。
+下表列出汇编器接受的 canonical mnemonic。`—` 表示该组合没有规范汇编写法。门级 control ALU 对 `cccccc` 的全部 64 个值都有总函数语义，因此合法 C 机器字可以解码并执行汇编器从不生成的 control 值。
 
 | `cccccc` | `a=0` | `a=1` |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ ALU 的固定输入 `x` 是 `D`。`a=0` 时 `y=A`，`a=1` 时 `y=M=RAM[A]`。
 | `000000` | `D&A` | `D&M` |
 | `010101` | `D|A` | `D|M` |
 
-位运算和算术结果都截断为 16 位，溢出按模 `2^16` 回绕。Hack 没有独立的状态标志寄存器；跳转条件直接检查本次 ALU 输出是否为零以及最高位是否为一。
+位运算和算术结果按所选 profile 的机器字宽度截断：`hack16` 按模 `2^16` 回绕，`hack32` 按模 `2^32` 回绕。Hack 没有独立状态标志寄存器；跳转条件直接检查本次 ALU 输出是否为零以及最高位是否为一。
 
 ## `dest`：写回目标
 
@@ -169,7 +169,7 @@ ALU 的固定输入 `x` 是 `D`。`a=0` 时 `y=A`，`a=1` 时 `y=M=RAM[A]`。
 
 ## `jump`：条件跳转
 
-跳转把 ALU 输出 `out` 当作 16 位二进制补码值判断：
+跳转把 ALU 输出 `out` 当作所选 profile 宽度的二进制补码值判断：
 
 | `jjj` | 汇编写法 | 条件 |
 | --- | --- | --- |
@@ -191,7 +191,7 @@ ALU 的固定输入 `x` 是 `D`。`a=0` 时 `y=A`，`a=1` 时 `y=M=RAM[A]`。
 ### A 指令
 
 ```text
-A  = 0 @ value[14:0]
+A  = zero_extend_to_word(value)
 PC = PC + 1
 ```
 
@@ -226,7 +226,7 @@ AM=D+1;JGT
 3. 把结果写入**旧 `A`** 指向的 RAM；
 4. 跳转到**旧 `A`** 指向的 ROM 地址。
 
-这正是 [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail) 中先执行 `let old_a = A` 的原因。
+这正是共享 [`model/core.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/model/core.sail) 在 C 指令路径先保留旧 `A` 的原因。
 
 ## 标准汇编怎样变成机器码
 
@@ -243,11 +243,13 @@ AM=D+1;JGT
 - `SP=0`、`LCL=1`、`ARG=2`、`THIS=3`、`THAT=4`；
 - `SCREEN=16384`、`KBD=24576`。
 
-A 指令直接编码为 `0` 加 15 位值。C 指令拼接为：
+对于 `hack16`，A 指令编码为 `0` 加 15 位值，C 指令拼接为：
 
 ```text
 111 + COMP[comp] + DEST[dest] + JUMP[jump]
 ```
+
+对于 `hack32`，A 指令编码为 `0` 加 31 位值；C 指令编码为 `0xFFFF` 加同一条 canonical 16 位 C 编码。
 
 例如：
 
@@ -264,7 +266,7 @@ M=D
 
 ## Hack+ 如何降级为正式指令
 
-Hack+ 的展开在标签解析和机器码编码**之前**完成。展开后的每一行都是 nand2tetris 定义的标准 Hack A/C 指令。
+Hack+ 的展开在标签解析和机器码编码**之前**完成。展开后的每一行使用 canonical nand2tetris A/C 汇编语法，最终机器字则采用所选 profile 的编码。
 
 | Hack+ 写法 | 展开后的标准 Hack 指令 | 主要副作用 |
 | --- | --- | --- |
@@ -287,7 +289,7 @@ Hack+ 的展开在标签解析和机器码编码**之前**完成。展开后的�
 | `JGE target, label` | `@target` / `D=M` / `@label` / `D;JGE` | 改写 `A`、`D`；大于等于零时跳转 |
 | `JLT target, label` | `@target` / `D=M` / `@label` / `D;JLT` | 改写 `A`、`D`；小于零时跳转 |
 | `JLE target, label` | `@target` / `D=M` / `@label` / `D;JLE` | 改写 `A`、`D`；小于等于零时跳转 |
-| `HALT` | 私有标签 + `@私有标签` / `0;JMP` | 在原生 Hack 上形成自循环 |
+| `HALT` | 私有标签 + `@私有标签` / `0;JMP` | 在所选 profile 中形成自循环 |
 
 几个容易忽略的点：
 
@@ -295,7 +297,7 @@ Hack+ 的展开在标签解析和机器码编码**之前**完成。展开后的�
 - 二元内存运算采用目标在前的顺序：`SUB R0, R1` 表示 `RAM[R0] -= RAM[R1]`；
 - `MOV`、二元内存运算和条件伪指令都会覆盖 `D`；
 - `JNZ` 与 `JNE` 等价，后者与正式 Hack 跳转助记符一致；
-- `HALT` 不是 Hack 指令。汇编器为每个 `HALT` 生成唯一的 `__HACKPLUS_HALT_n` 标签和两指令自循环，并把该 ROM 地址记录为执行元数据；本项目 executor 到达该地址时结束，而把同一机器码放到真实 Hack 硬件上会停留在自循环中。
+- `HALT` 不是 Hack 指令。汇编器为每个 `HALT` 生成唯一的 `__HACKPLUS_HALT_n` 标签和两指令自循环，并把该 ROM 地址记录为执行元数据；本项目 executor 到达该地址时结束，而实现所选 profile 的机器会停留在自循环中。
 
 ### 完整展开示例
 
@@ -327,38 +329,33 @@ D;JEQ
 0;JMP
 ```
 
-随后第一遍汇编才计算 `DONE` 和私有 HALT 标签的 ROM 地址，第二遍再生成 16 位机器码。因此，伪指令展开产生的额外指令会真实占用 ROM 地址，标签地址也以**展开后**的程序为准。
+随后第一遍汇编才计算 `DONE` 和私有 HALT 标签的 ROM 地址，第二遍再生成所选 profile 的机器字。因此，伪指令展开产生的额外指令会真实占用 ROM 地址，标签地址也以**展开后**的程序为准。
 
 ## 这份 ISA 如何映射到 Sail
 
-[`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail) 的结构几乎与本文一一对应：
+当前模型把共享语义与 profile 位布局分开：
 
-| Sail 定义 | ISA 概念 |
+| Sail 路径 | 责任 |
 | --- | --- |
-| `type word = bits(16)` | 16 位机器字和数据字 |
-| `input_selector` / `alu_control` / `destination_control` / `jump_control` | C 指令各字段的命名位向量类型 |
-| `union instruction` | A/C 两种解码结果 |
-| `mapping encdec` | 合法 A/C 编码的紧凑双向关系 |
-| `union hack_decode_result` | 显式的成功或非法解码结果 |
-| `decode_hack` / `encode_hack` | 检查合法性的 decode 包装与基于 mapping 的 encode 包装 |
-| `register ROM/A/D/PC/RAM` | 指令存储与架构状态 |
-| `fetch_hack` | 按程序计数器从 ROM 读取一个原始机器字 |
-| `alu` | `comp` 字段语义 |
-| `should_jump` | `jump` 真值表 |
-| `execute` | 已解码指令的状态转换 |
-| `hack_step` / `hack_execution_outcome` | 模型自有的取指 → 解码 → 执行组合及类型化结果 |
+| `model/core.sail` | 共享 instruction/exception、total 64-control ALU、架构状态、fetch、带合法性检查的 decode、execute、step，以及编码时直接使用的 scattered `encdec` 声明 |
+| `model/profiles/hack16.sail` / `hack32.sail` | 单一 profile 入口：定义位宽与合法性、include `core.sail`，再提供双向 A/C mapping clauses |
+| `projects/hack16.sail_project` / `hack32.sail_project` | 每个可构建 profile 的单文件源码闭包 |
 
-C 指令字段使用命名位向量类型，而不是匿名的 `bit` / `bits(n)` 位置。这使 `CInstruction`、`alu` 和 `should_jump` 的接口能够直接表达字段角色，同时不改变原始编码域。
+C 指令字段使用命名位向量类型，而不是匿名的 `bit` / `bits(n)` 位置。这使 decoded instruction、`alu` 和 `should_jump` 的接口能够直接表达字段角色，同时不改变原始编码域。
 
-`encdec` 只写一次合法 A/C 位布局，并可双向使用。`decode_hack` 先显式匹配第 15 位，再匹配 C 指令的 `11` 前缀，确认合法后才调用 mapping。`100`、`101`、`110` 前缀返回 `DecodeIllegal(encoded)` 并保留原始机器字；通配分支不会静默构造合法指令。`encode_hack` 暴露 mapping 的反方向。`execute` 只消费已经解码的 `instruction`，因此不会直接调用 `encdec`。
+`decode_hack` 先检查合法性，再调用 profile mapping。`hack16` 中最高位为 `0` 的机器字是 A 指令，只有 `111` 前缀是 C 指令，`100`、`101`、`110` 非法。`hack32` 中最高位为 `0` 的机器字是 A 指令；C 指令必须同时满足高 16 位为 `0xFFFF`、低半字以 `111` 开头，其他最高位为 `1` 的机器字全部非法。非法机器字会在进入 `execute` 前抛出 `HackIllegalInstruction(word)`，既保留原始字，也不提交架构状态。
 
-标准汇编器只生成上面表格中的规范 `comp` 编码。Sail 解码器把 `a` 与六位 `comp` 分开建模；对于不读取 `y` 的运算，非规范的 `a=1` 位型在电路和本模型中会表现为同义编码，但项目汇编器不会生成它们。
+C 前缀合法后，六位 ALU control、`a`、`dest`、`jump` 的所有组合都属于机器编码域。共享 `alu` 按所选机器字宽度定义全部 64 种 control 结果；汇编器则有意只生成上表的 canonical mnemonic 子集。汇编语言词表不能替代机器码合法性定义。
+
+## 兼容性边界
+
+`hack16` 是 canonical nand2tetris 基线。`hack32` 不是普通 nand2tetris `.hack` 格式：机器字为 32 位，A 立即数为 31 位，C 指令带额外的 `0xFFFF` 高半字。汇编 mnemonic 相同不代表二进制可互换；必须显式选择 `hack32`，并使用理解 profile manifest 的 loader。
 
 ## 模型边界
 
 理解测试结果时要区分完整 Hack 平台与本可执行模型：
 
-- ROM 在 `hack.sail` 中声明；生成的 driver 初始化原始机器字，`fetch_hack` 和 `hack_step` 负责取指与分派；
+- ROM 由所选 profile composition 声明；生成的 driver 初始化 profile 宽度的原始机器字，`fetch_hack` 和 `hack_step` 负责取指与分派；
 - RAM 没有 Screen、Keyboard 的设备副作用；
 - `HALT`、Hack+、`.assert` 和 `.max_steps` 都属于工具层，不属于 Hack ISA；
 - 模型描述架构状态转换，不模拟门延迟、时钟边沿细节或 nand2tetris HDL；
@@ -367,10 +364,10 @@ C 指令字段使用命名位向量类型，而不是匿名的 `bit` / `bits(n)`
 ## 对照源码学习
 
 1. 先看本文的 A/C 编码和执行伪代码；
-2. 打开 [`hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail)，依次阅读 `encdec → decode_hack → encode_hack → fetch_hack → alu → should_jump → execute → hack_step`；
+打开一个 `model/profiles/` 文件，沿 include 进入 [`model/core.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/model/core.sail)，再回到 profile 的 mapping clauses；编码直接使用 `encdec(instruction)`，执行路径依次阅读 `fetch_hack` → `decode_hack` → `encdec(word)` → `execute` → `hack_step`；
 3. 查看 [`programs/basic_alu.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/basic_alu.asm)，对照标准汇编与 Hack+；
-4. 执行 `pixi run just hack assemble basic_alu`，查看 `isa/hack/.build/basic_alu.hack`；
-5. 阅读 [`tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail)，观察 ISA 规则如何直接变成测试。
+4. 执行 `pixi run just hack assemble basic_alu`，查看 `isa/hack/.build/hack16/asm/basic_alu/basic_alu.hack`；加 `--profile hack32` 可查看 `.build/hack32/asm/basic_alu/basic_alu.hack`；
+5. 阅读 `tests/sail/hack16/conformance.sail` 与 `tests/sail/hack32/conformance.sail`，观察 profile 规则如何直接变成测试。
 
 ## 规范来源
 

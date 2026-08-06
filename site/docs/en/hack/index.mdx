@@ -4,7 +4,7 @@ title: Hack overview
 
 # Hack with Sail
 
-Hack is the 16-bit teaching computer from nand2tetris. This module turns its instruction-set specification into an executable Sail model, then surrounds that model with an assembler, runnable programs, assertions, and regression tests.
+The `hack` ISA family has two profiles. `hack16` is the canonical 16-bit nand2tetris baseline; `hack32` is a 32-bit Verylogic extension. Both keep a 15-bit PC/address space and 32768-word ROM and RAM. The module surrounds their shared Sail semantics with an assembler, runnable programs, assertions, and regression tests.
 
 ## Run it first
 
@@ -14,7 +14,8 @@ Clone the repository, open its root directory, and run:
 git clone https://github.com/VIDLG/verylogic-workspace-sail.git
 cd verylogic-workspace-sail
 pixi run just hack list
-pixi run just hack run multiply
+pixi run just hack run multiply                    # defaults to hack16
+pixi run just hack run multiply --profile hack32
 ```
 
 A successful program ends with `ASSERT PASS` and a dump of architectural state. The [tutorial](/hack/tutorial) explains the output and follows the same program through every toolchain stage.
@@ -38,18 +39,18 @@ flowchart TD
     Assembler --> Machine[annotated .hack]
     Machine --> Executor[executor.py]
     Executor --> Driver[annotated driver.sail]
-    Driver --> Sail[hack.sail]
+    Driver --> Sail[profile project + shared model]
     Sail --> C[Sail C backend]
     C --> Native[native executable]
     Native --> Assertions[Sail assertions]
 ```
 
-The machine contract belongs to `hack.sail`; source translation belongs to the assembler; driver generation and native compilation belong to the executor; program discovery and command dispatch belong to workflow.
+The machine contract is split between shared `model/core.sail`, one self-contained `model/profiles/<profile>.sail` entry, and `projects/<profile>.sail_project`. Source translation belongs to the assembler; driver generation and native compilation belong to the executor; program discovery and command dispatch belong to workflow.
 
 ## Suggested learning sequence
 
 1. Complete the [tutorial](/hack/tutorial) and inspect `multiply.asm`.
-2. Read the [ISA guide](/hack/isa) while following `hack.sail`.
+2. Read the [ISA guide](/hack/isa) while following one profile entry into its included `model/core.sail` and profile project.
 3. Use [Evolve Hack](/hack/evolution) to choose and specify a modification at the correct layer.
 4. Enter **Toolchain internals** and follow the same source through the [assembler](/hack/assembler).
 5. Finish with the [execution and test workflow](/hack/execution).

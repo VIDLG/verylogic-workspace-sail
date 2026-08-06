@@ -1,0 +1,3 @@
+hack16_profile {
+  files ../model/profiles/hack16.sail
+}

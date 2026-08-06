@@ -108,7 +108,7 @@ RTL 适合回答“这颗处理器怎样实现”，不适合作为唯一来源�
 
 ### 用 Sail：代码几乎只剩机器规则
 
-实际的 `hack.sail` 先保存旧状态，再明确写回：
+共享的 [`model/core.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/model/core.sail) 模型先保存旧状态，再明确写回：
 
 ```ocaml
 let old_a = A;
@@ -183,7 +183,7 @@ if (rd != 0) {
 
 ### 在 Sail 中：编码、类型和执行语义共享同一种语言
 
-Sail 项目的 RISC-V 示例先定义指令形式，再把它与 32 位机器字连接：
+上游 Sail 项目的 RISC-V 示例先定义指令形式，再把它与 32 位机器字连接：
 
 ```ocaml
 union clause ast = ITYPE : (bits(12), regbits, regbits, iop)
@@ -217,6 +217,8 @@ function clause execute (ITYPE (imm, rs1, rd, op)) = {
 - `encdec` 把指令结构与机器编码放在可检查的关系中。
 
 读者看到的主要仍是 RISC-V，而不是宿主语言或某颗核心的组织方式。
+
+这个上游示例展示了 Sail 的双向 `mapping` 能力。本仓库会在合法编码是紧凑双射时使用 mapping，例如 Hack；若还存在非法前缀，则再用显式 decode `match` 包装。RV32I 这类更复杂的模型则使用分离的 decode/encode 函数。
 
 ## 两个例子说明了什么
 

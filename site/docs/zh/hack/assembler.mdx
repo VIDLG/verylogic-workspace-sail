@@ -2,7 +2,7 @@
 
 [← Hack ISA](/zh/hack/isa) · [公共教学契约](/zh/reference/teaching-contract) · [English](/hack/assembler) · [执行器与测试 →](/zh/hack/execution)
 
-本文沿着 [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) 与 [`artifact.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/artifact.py)，解释源码怎样变成 16 位 Hack 机器码，再跨越严格的持久化 artifact 边界。共享 directive 与 manifest 规则见[公共教学契约](/zh/reference/teaching-contract)。`assembler.py` 保持为纯库，`assembler_cli.py` 是处理参数与发布的薄 CLI 边界。
+本文沿着 [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) 与 [`artifact.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/artifact.py)，解释源码怎样变成 profile-specific Hack 机器码，再跨越严格的持久化 artifact 边界。命令默认生成 16 位 `hack16`，`--profile hack32` 选择 32 位机器字。共享 directive 与 manifest 规则见[公共教学契约](/zh/reference/teaching-contract)。`assembler.py` 保持为纯库，`assembler_cli.py` 是处理参数与发布的薄 CLI 边界。
 
 ## 汇编器负责什么
 
@@ -104,7 +104,7 @@ ROM[0001] L1 [2/4] SET R0, 6 => D=A
 
 A 操作数只能是：
 
-- `0..32767` 的十进制数；
+- 所选 A 立即数范围内的十进制数：`hack16` 为 `0..32767`，`hack32` 为 `0..2147483647`；
 - 匹配 `[A-Za-z_.$:][A-Za-z0-9_.$:]*` 的 Hack 符号。
 
 解析阶段保留符号字符串，因为此时还不知道标签地址，也不应提前分配变量。
@@ -213,14 +213,15 @@ SCREEN KBD
 1. 十进制操作数直接使用；
 2. 已知符号查表；
 3. 未知符号被视为变量，从 RAM 地址 `16` 起顺序分配；
-4. 数值以 15 位写入机器字，最高位为 `0`。
+4. 在所选 profile 中写入前导 `0` 后的立即数：`hack16` 为 15 位，`hack32` 为 31 位。
 
 同一个变量名再次出现时复用第一次分配的地址。
 
-对于 C 指令，编码公式是：
+两个 profile 的 C 指令复用同一组 canonical 字段：
 
 ```text
-111 + COMP[comp] + DEST[dest] + JUMP[jump]
+hack16: 111 + COMP[comp] + DEST[dest] + JUMP[jump]
+hack32: 0xFFFF + 111 + COMP[comp] + DEST[dest] + JUMP[jump]
 ```
 
 例如 `D=M+1;JGT`：
@@ -271,7 +272,7 @@ max_steps_origin: Literal["default", "source", "cli"]
 
 ### 文件开头的结构化 manifest block
 
-`write_hack()` 委托公共 renderer。`summary` 和 `full` 在文件开头写入一个连续的多行缩进 canonical S-expression block，每一行都带 `//% ` 前缀；`none` 把同一 form 写成一条带前缀的紧凑行。Schema 是 `verylogic.annotated-image`；公共 envelope 包含 runtime `max_steps`、assertions、completion 与 ISA metadata。Hack 直接汇编省略空 frontend `provenance`。Hack-specific validation 固定 `hack/standard`、source kind `asm`、16 位 word、memory dimensions 与 lowered-self-loop completion。Runtime value 同时记录 `cli`、`source` 或 `default` origin。
+`write_hack()` 委托公共 renderer。`summary` 和 `full` 在文件开头写入一个连续的多行缩进 canonical S-expression block，每一行都带 `//% ` 前缀；`none` 把同一 form 写成一条带前缀的紧凑行。Schema 是 `verylogic.annotated-image`；公共 envelope 包含 runtime `max_steps`、assertions、completion 与 ISA metadata。Hack 直接汇编省略空 frontend `provenance`。Hack-specific validation 固定 `isa=hack`、`profile=hack16|hack32`、source kind `asm`、profile word width、memory dimensions 与 lowered-self-loop completion；`standard` 从来不是合法 profile。Runtime value 同时记录 `cli`、`source` 或 `default` origin。
 
 ### 带源码映射的机器字
 
@@ -280,7 +281,7 @@ max_steps_origin: Literal["default", "source", "cli"]
 1110110000010000 // ROM[0001] L1 [2/4] SET R0, 6 => D=A
 ```
 
-行首仍是普通 Hack 16 位二进制。不了解 metadata 的简单工具可以忽略注释；项目 executor 则能恢复完整运行契约。
+这个默认示例行首仍是普通 16 位 `hack16` 二进制。`hack32` 行首为 32 个二进制位，不是普通 nand2tetris `.hack` 机器字；项目中理解 profile 的 executor 会从 manifest 与注释恢复完整运行契约。
 
 ### 教学信息级别
 
@@ -313,11 +314,11 @@ executor 不直接使用内存中的 `AssemblyResult`。它先调用 `write_hack
 - 文件开头恰好有一个连续 manifest block，格式符合 comment level，并具有公共 version-1 精确键集合；
 - ISA/profile、source identity、description、comment level、runtime value/origin、assertions、completion 与 `isa_metadata` 类型和值合法；
 - equality assertion 使用无 wrapper 的 `bits` mode，ordered assertion 使用显式 `signed` 或 `unsigned` mode；
-- 每个机器字恰好 16 位且只含 `0/1`，注释是否存在符合 manifest level；
+- 每个机器字恰好具有所选 profile 宽度（16 或 32 个二进制位），注释是否存在符合 manifest level；
 - completion address 真实指向 `@address; 0;JMP` 自循环；
 - ROM 不超过 32768 个机器字。
 
-`load_hack()` 只接受严格带注释格式，没有文件开头 manifest block 的文件会被拒绝。未来若增加原始 nand2tetris `.hack` 互操作，必须使用独立显式 frontend，因为 raw image 无法如实提供 description、assertions、watchdog 来源或 completion metadata。
+`load_hack()` 只接受严格带注释格式；缺少文件开头 manifest block 或 profile 不匹配都会被拒绝。原始 nand2tetris 互操作必须使用独立显式 frontend，因为 raw image 无法如实提供 description、assertions、watchdog 来源或 completion metadata；`hack32` 还使用 32 位机器字，不属于普通 nand2tetris `.hack` 兼容格式。
 
 ## 错误设计
 
@@ -415,12 +416,12 @@ GOTO LOOP
 pixi run just hack assemble multiply
 ```
 
-打开 `isa/hack/.build/multiply.hack`，然后对照：
+打开 `isa/hack/.build/hack16/asm/multiply/multiply.hack`（或用 `--profile hack32` 汇编后打开 `.build/hack32/asm/multiply/multiply.hack`）
 
 - 源码中的每一条伪指令；
 - 展开的标准指令；
 - ROM 地址；
-- 16 位机器码；
+- profile 宽度的机器码；
 - 文件顶部 metadata。
 
 下一步阅读 [执行器与测试工作流](/zh/hack/execution)，继续追踪这个 `.hack` 文件怎样变成真正运行的程序。

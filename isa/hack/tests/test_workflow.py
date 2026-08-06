@@ -5,6 +5,20 @@ import pytest
 from isa.hack.tools import workflow
 
 
+def test_profile_registry_and_output_paths_are_distinct() -> None:
+    assert tuple(workflow.PROFILES) == ("hack16", "hack32")
+    entry: workflow.Program = {
+        "name": "program",
+        "source": Path("program.asm"),
+        "description": "Test",
+    }
+    hack16 = workflow.output_prefix(entry, workflow.get_profile("hack16"))
+    hack32 = workflow.output_prefix(entry, workflow.get_profile("hack32"))
+    assert hack16 != hack32
+    assert hack16.parts[-4:] == ("hack16", "asm", "program", "program")
+    assert hack32.parts[-4:] == ("hack32", "asm", "program", "program")
+
+
 def test_bundled_programs_are_discovered_and_selected_from_sources() -> None:
     entries = workflow.discover_programs()
 
@@ -77,7 +91,12 @@ def test_artifact_and_execution_options_are_forwarded_to_tools(
     workflow.assemble(entry, max_steps=12)
     workflow.run(entry, max_steps=25, comments="none")
 
-    assert ["--max-steps", "12"] == commands[0][5:7]
+    assert ["--profile", "hack16"] == commands[0][5:7]
+    assert ["--max-steps", "12"] == commands[0][7:9]
     assert commands[0][-2:] == ["--comments", "summary"]
-    assert ["--max-steps", "25"] == commands[1][5:7]
+    assert ["--profile", "hack16"] == commands[1][5:7]
+    assert ["--max-steps", "25"] == commands[1][7:9]
     assert commands[1][-2:] == ["--comments", "none"]
+    output = Path(commands[0][4])
+    assert output.name == "program.hack"
+    assert output.parts[-4:] == ("hack16", "asm", "program", "program.hack")

@@ -16,6 +16,7 @@ from isa.hack.tools.assembler import (
     canonical_assertion_target,
     parse_expected_value,
 )
+from isa.hack.tools.profiles import Profile, get_profile
 from tools.isa_support.cli import validate_comment_level
 from tools.isa_support.manifest import (
     FORMAT_TAG,
@@ -31,17 +32,8 @@ from tools.isa_support.manifest import (
 )
 from tools.isa_support.publish import atomic_write_text
 
-HACK_WORD_RE = re.compile(r"\s*(?P<word>[01]{16})(?:\s+//\s*(?P<comment>.*?))?\s*")
-PROFILE = "standard"
-ISA_METADATA = {
-    "word_bits": 16,
-    "address_bits": 15,
-    "rom_words": 32768,
-    "ram_words": 32768,
-}
-
-
 HackAddress = Annotated[int, Field(strict=True, ge=0, lt=32768)]
+PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
 
 
 class HackProvenance(ManifestModel):
@@ -53,21 +45,12 @@ class HackManifestAssertion(ManifestAssertion):
     def validate_hack_semantics(self) -> HackManifestAssertion:
         try:
             canonical_target = canonical_assertion_target(self.target, self.line)
-            normalized_value = parse_expected_value(
-                str(self.value),
-                self.line,
-                canonical_target,
-                self.operator,
-                self.mode,
-            )
         except AssemblyError as error:
             raise ValueError(error.message) from error
         if canonical_target != self.target:
             raise ValueError(
                 f"target must use canonical Hack spelling {canonical_target!r}"
             )
-        if normalized_value != self.value:
-            raise ValueError("bit-exact value must be serialized canonically")
 
         displayed_target = self.display_target
         if self.mode != "bits":
@@ -103,10 +86,13 @@ class HackCompletion(ManifestModel):
 
 
 class HackIsaMetadata(ManifestModel):
-    word_bits: Literal[16]
-    address_bits: Literal[15]
-    rom_words: Literal[32768]
-    ram_words: Literal[32768]
+    word_bits: PositiveStrictInt
+    a_immediate_bits: PositiveStrictInt
+    address_bits: PositiveStrictInt
+    pc_bits: PositiveStrictInt
+    rom_words: PositiveStrictInt
+    ram_words: PositiveStrictInt
+    sail_project: str
 
 
 class HackManifest(
@@ -120,13 +106,14 @@ class HackManifest(
 ):
     @model_validator(mode="after")
     def validate_identity(self) -> HackManifest:
-        if self.isa != "hack" or self.profile != PROFILE:
-            raise ValueError("ISA/profile must be hack/standard")
+        if self.isa != "hack":
+            raise ValueError("ISA must be hack")
         return self
 
 
 @dataclass(frozen=True)
 class LoadedHack:
+    profile: Profile
     words: list[int]
     metadata: AssemblyMetadata
     word_comments: tuple[str | None, ...]
@@ -144,13 +131,27 @@ def _assertion_manifest(assertion: Assertion) -> dict[str, object]:
     }
 
 
-def create_hack_manifest(metadata: AssemblyMetadata, comments: str) -> HackManifest:
+def _expected_isa_metadata(profile: Profile) -> dict[str, object]:
+    return {
+        "word_bits": profile.word_bits,
+        "a_immediate_bits": profile.a_immediate_bits,
+        "address_bits": profile.address_bits,
+        "pc_bits": profile.pc_bits,
+        "rom_words": profile.rom_words,
+        "ram_words": profile.ram_words,
+        "sail_project": profile.sail_project.name,
+    }
+
+
+def create_hack_manifest(
+    profile: Profile, metadata: AssemblyMetadata, comments: str
+) -> HackManifest:
     source_path = validate_source_path(metadata.source_path)
     return validate_model(
         HackManifest,
         {
             "isa": "hack",
-            "profile": PROFILE,
+            "profile": profile.name,
             "source": {"kind": metadata.source_kind, "path": source_path},
             "description": metadata.description,
             "comments": validate_comment_level(comments),
@@ -169,7 +170,7 @@ def create_hack_manifest(metadata: AssemblyMetadata, comments: str) -> HackManif
                 "address_unit": "word",
                 "addresses": list(metadata.halt_addresses),
             },
-            "isa_metadata": ISA_METADATA,
+            "isa_metadata": _expected_isa_metadata(profile),
         },
         context="manifest",
     )
@@ -193,7 +194,9 @@ def apply_runtime_overrides(
     )
 
 
-def _word_line(address: int, record: MachineWord, comments: str) -> str:
+def _word_line(
+    profile: Profile, address: int, record: MachineWord, comments: str
+) -> str:
     suffix = ""
     if comments == "summary":
         source, separator, inline_comment = record.source.text.partition("//")
@@ -221,16 +224,16 @@ def _word_line(address: int, record: MachineWord, comments: str) -> str:
                 f" [{expansion.index}/{expansion.count}] => {expansion.instruction}"
             )
         suffix = f" // {mapping}"
-    return f"{record.value:016b}{suffix}\n"
+    return f"{record.value:0{profile.word_bits}b}{suffix}\n"
 
 
 def write_hack(assembly: AssemblyResult, path: Path, comments: str = "summary") -> None:
     comments = validate_comment_level(comments)
-    manifest = create_hack_manifest(assembly.metadata, comments)
+    manifest = create_hack_manifest(assembly.profile, assembly.metadata, comments)
     text = render_manifest(manifest)
     text += render_preamble(manifest, comments)
     text += "".join(
-        _word_line(address, record, comments)
+        _word_line(assembly.profile, address, record, comments)
         for address, record in enumerate(assembly.records)
     )
     atomic_write_text(path, text)
@@ -263,9 +266,13 @@ def _parse_words(
     path: Path,
     lines: list[str],
     *,
+    profile: Profile,
     comments: str,
     first_line: int,
 ) -> tuple[list[int], tuple[str | None, ...]]:
+    word_re = re.compile(
+        rf"\s*(?P<word>[01]{{{profile.word_bits}}})(?:\s+//\s*(?P<comment>.*?))?\s*"
+    )
     words: list[int] = []
     word_comments: list[str | None] = []
     for line_number, line in enumerate(lines, start=first_line):
@@ -282,10 +289,10 @@ def _parse_words(
                     f"{path}:{line_number}: comments=none artifact contains human comments"
                 )
             continue
-        match = HACK_WORD_RE.fullmatch(line)
+        match = word_re.fullmatch(line)
         if match is None:
             raise ValueError(
-                f"{path}:{line_number}: expected a 16-bit binary word or comment"
+                f"{path}:{line_number}: expected a {profile.word_bits}-bit binary word or comment"
             )
         comment = match.group("comment")
         if comments == "none" and comment is not None:
@@ -294,17 +301,17 @@ def _parse_words(
             )
         words.append(int(match.group("word"), 2))
         word_comments.append(comment)
-        if len(words) > 32768:
+        if len(words) > profile.rom_words:
             raise ValueError(
-                f"{path}:{line_number}: program exceeds the 32768-word Hack ROM"
+                f"{path}:{line_number}: program exceeds the {profile.rom_words}-word Hack ROM"
             )
     return words, tuple(word_comments)
 
 
 def _validate_completion_words(
-    path: Path, words: list[int], addresses: tuple[int, ...]
+    path: Path, profile: Profile, words: list[int], addresses: tuple[int, ...]
 ) -> None:
-    halt_jump = int("1110101010000111", 2)
+    halt_jump = profile.encode_c(int("1110101010000111", 2))
     for address in addresses:
         if address + 1 >= len(words):
             raise ValueError(
@@ -317,7 +324,29 @@ def _validate_completion_words(
             )
 
 
-def load_hack(path: Path) -> LoadedHack:
+def _validate_manifest_contract(manifest: HackManifest) -> Profile:
+    profile = get_profile(manifest.profile)
+    actual_metadata = manifest.isa_metadata.model_dump(mode="python")
+    if actual_metadata != _expected_isa_metadata(profile):
+        raise ValueError(f"manifest ISA metadata does not match profile {profile.name}")
+    for assertion in manifest.assertions:
+        try:
+            normalized = parse_expected_value(
+                str(assertion.value),
+                assertion.line,
+                assertion.target,
+                assertion.operator,
+                assertion.mode,
+                profile,
+            )
+        except AssemblyError as error:
+            raise ValueError(error.message) from error
+        if normalized != assertion.value:
+            raise ValueError("bit-exact assertion value must be serialized canonically")
+    return profile
+
+
+def load_hack(path: Path, *, expected_profile: str | None = None) -> LoadedHack:
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or not lines[0].startswith(FORMAT_TAG):
         raise ValueError(
@@ -330,12 +359,19 @@ def load_hack(path: Path) -> LoadedHack:
         public_manifest.model_dump(mode="python", by_alias=True),
         context="manifest",
     )
+    profile = _validate_manifest_contract(manifest)
+    if expected_profile is not None and profile.name != expected_profile:
+        raise ValueError(
+            f"artifact profile {profile.name!r} does not match expected profile "
+            f"{expected_profile!r}"
+        )
     metadata = _metadata_from_manifest(manifest)
     words, word_comments = _parse_words(
         path,
         lines[manifest_lines:],
+        profile=profile,
         comments=manifest.comments,
         first_line=manifest_lines + 1,
     )
-    _validate_completion_words(path, words, metadata.halt_addresses)
-    return LoadedHack(words, metadata, word_comments, manifest)
+    _validate_completion_words(path, profile, words, metadata.halt_addresses)
+    return LoadedHack(profile, words, metadata, word_comments, manifest)

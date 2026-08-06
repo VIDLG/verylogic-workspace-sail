@@ -1,0 +1,4 @@
+hack32_conformance {
+  requires hack32_profile
+  files "conformance.sail"
+}

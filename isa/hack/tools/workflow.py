@@ -15,17 +15,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from isa.hack.tools import executor
 from isa.hack.tools.assembler import AssemblyError, source_description
+from isa.hack.tools.profiles import (
+    DEFAULT_PROFILE,
+    PROFILES,
+    Profile,
+    get_profile,
+    validate_registry,
+)
 from tools import install_sail
 from tools.isa_support.cli import COMMENT_LEVELS, positive_int_arg
 from tools.isa_support.process import run_checked
 from tools.isa_support.publish import remove_tree
 
 PROGRAMS = PACKAGE_ROOT / "programs"
-ISA_DESCRIPTION = "nand2tetris Hack 16-bit CPU ISA"
-ISA_SOURCE = PACKAGE_ROOT / "hack.sail"
+ISA_DESCRIPTION = "Hack ISA profiles: hack16 and hack32"
 ASSEMBLER = PACKAGE_ROOT / "tools/assembler_cli.py"
 EXECUTOR = PACKAGE_ROOT / "tools/executor.py"
-CONFORMANCE = PACKAGE_ROOT / "tests/isa_conformance.sail"
 
 
 class Program(TypedDict):
@@ -74,12 +79,38 @@ def selected_program(entries: list[Program], name: str) -> Program:
     raise ValueError(f"unknown program {name!r}; available: {available}")
 
 
-def output_prefix(entry: Program) -> Path:
-    return PACKAGE_ROOT / ".build" / entry["name"]
+def output_prefix(entry: Program, profile: Profile) -> Path:
+    name = entry["name"]
+    return PACKAGE_ROOT / ".build" / profile.name / "asm" / name / name
 
 
-def check(sail: Path) -> None:
-    command([str(sail), "--just-check", str(ISA_SOURCE)])
+def conformance_project(profile: Profile) -> Path:
+    return PACKAGE_ROOT / f"tests/sail/{profile.name}/conformance.sail_project"
+
+
+def check(sail: Path, profile: Profile | None = None) -> None:
+    selected = (profile,) if profile is not None else tuple(PROFILES.values())
+    for item in selected:
+        command(
+            [
+                str(sail),
+                "--project",
+                str(item.sail_project),
+                "--all-modules",
+                "--list-files",
+            ]
+        )
+        command(
+            [
+                str(sail),
+                "--project",
+                str(item.sail_project),
+                "--project",
+                str(conformance_project(item)),
+                "--all-modules",
+                "--just-check",
+            ]
+        )
 
 
 def assemble(
@@ -87,8 +118,10 @@ def assemble(
     *,
     max_steps: int | None = None,
     comments: str = "summary",
+    profile: Profile | None = None,
 ) -> None:
-    output = output_prefix(entry)
+    selected_profile = profile or get_profile(DEFAULT_PROFILE)
+    output = output_prefix(entry, selected_profile)
     _ = output.parent.mkdir(parents=True, exist_ok=True)
     arguments = [
         sys.executable,
@@ -96,6 +129,8 @@ def assemble(
         str(source_path(entry["source"])),
         "-o",
         f"{output}.hack",
+        "--profile",
+        selected_profile.name,
     ]
     if max_steps is not None:
         if max_steps <= 0:
@@ -111,8 +146,10 @@ def run(
     max_steps: int | None = None,
     require_assertions: bool = False,
     comments: str = "summary",
+    profile: Profile | None = None,
 ) -> None:
-    output = output_prefix(entry)
+    selected_profile = profile or get_profile(DEFAULT_PROFILE)
+    output = output_prefix(entry, selected_profile)
     _ = output.parent.mkdir(parents=True, exist_ok=True)
     arguments = [
         sys.executable,
@@ -120,6 +157,8 @@ def run(
         str(source_path(entry["source"])),
         "--output",
         str(output),
+        "--profile",
+        selected_profile.name,
     ]
     if max_steps is not None:
         if max_steps <= 0:
@@ -132,14 +171,24 @@ def run(
 
 
 def test(entries: list[Program]) -> None:
+    validate_registry()
     command([sys.executable, "-m", "pytest", "isa/hack/tests"], cwd=ROOT)
     build = PACKAGE_ROOT / ".build"
     build.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".conformance.", dir=build) as temporary:
-        executor.compile_and_run(Path(temporary) / "isa_conformance", CONFORMANCE)
-    for entry in entries:
-        print(f"testing {entry['name']}")
-        run(entry, require_assertions=True)
+    for profile in PROFILES.values():
+        profile_build = build / profile.name
+        profile_build.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".conformance.", dir=profile_build
+        ) as temporary:
+            executor.compile_and_run(
+                profile,
+                Path(temporary) / "isa_conformance",
+                conformance_project(profile),
+            )
+        for entry in entries:
+            print(f"testing {profile.name}/{entry['name']}")
+            run(entry, require_assertions=True, profile=profile)
 
 
 def clean() -> None:
@@ -158,6 +207,11 @@ def main() -> int:
     )
     _ = parser.add_argument("program", nargs="?")
     _ = parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        help="narrow check or select assemble/run profile; default run profile is hack16",
+    )
+    _ = parser.add_argument(
         "--comments",
         choices=COMMENT_LEVELS,
         default="summary",
@@ -174,6 +228,7 @@ def main() -> int:
     name = cast(str | None, args.program)
     comments = cast(str, args.comments)
     max_steps = cast(int | None, args.max_steps)
+    profile_name = cast(str | None, args.profile)
 
     try:
         entries = discover_programs()
@@ -182,10 +237,21 @@ def main() -> int:
             if name is None:
                 raise ValueError(f"{action} requires a program name")
             entry = selected_program(entries, name)
+            profile = get_profile(profile_name or DEFAULT_PROFILE)
             if action == "assemble":
-                assemble(entry, max_steps=max_steps, comments=comments)
+                assemble(
+                    entry,
+                    max_steps=max_steps,
+                    comments=comments,
+                    profile=profile,
+                )
             else:
-                run(entry, max_steps=max_steps, comments=comments)
+                run(
+                    entry,
+                    max_steps=max_steps,
+                    comments=comments,
+                    profile=profile,
+                )
         elif name is not None:
             raise ValueError(f"{action} does not accept a program name")
         elif comments != "summary":
@@ -195,7 +261,9 @@ def main() -> int:
         elif action == "check":
             if sail is None:
                 raise AssertionError("check requires project-local Sail")
-            check(sail)
+            check(sail, None if profile_name is None else get_profile(profile_name))
+        elif profile_name is not None:
+            raise ValueError(f"{action} does not accept --profile")
         elif action == "test":
             test(entries)
         elif action == "list":

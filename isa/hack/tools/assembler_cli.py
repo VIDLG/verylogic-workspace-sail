@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from isa.hack.tools.artifact import apply_runtime_overrides, write_hack
 from isa.hack.tools.assembler import AssemblyError, assemble
+from isa.hack.tools.profiles import DEFAULT_PROFILE, PROFILES
 from tools.isa_support.cli import COMMENT_LEVELS, positive_int_arg
 
 
@@ -20,6 +21,12 @@ def main() -> int:
     )
     parser.add_argument("source", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        default=DEFAULT_PROFILE,
+        help="Hack architecture profile (default: hack16)",
+    )
     parser.add_argument(
         "--max-steps",
         type=positive_int_arg,
@@ -38,7 +45,7 @@ def main() -> int:
         source = Path(args.source)
         output = Path(args.output)
         assembly = apply_runtime_overrides(
-            assemble(source),
+            assemble(source, profile=args.profile),
             max_steps=args.max_steps,
         )
         output.parent.mkdir(parents=True, exist_ok=True)

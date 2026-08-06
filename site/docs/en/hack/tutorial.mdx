@@ -2,7 +2,7 @@
 
 [Hack overview](/hack/) · [中文](/zh/hack/tutorial) · [Next: Hack ISA →](/hack/isa)
 
-This is an executable, educational model of the [Hack](https://www.nand2tetris.org/) instruction set. It describes Hack's instruction encoding, ALU, registers, memory, and control flow in [Sail](https://github.com/rems-project/sail), then uses Sail's C backend to run real Hack assembly programs.
+This is an executable, educational model of the [Hack](https://www.nand2tetris.org/) ISA family. The default `hack16` profile is the canonical nand2tetris machine; `hack32` is a 32-bit Verylogic extension. Shared [Sail](https://github.com/rems-project/sail) semantics describe their ALU, registers, memory, and control flow, then Sail's C backend runs real Hack assembly programs.
 
 If nand2tetris teaches how to build a computer from NAND gates, this repository explores the next abstraction boundary:
 
@@ -38,7 +38,7 @@ Sail resembles OCaml in places, but **Sail is not OCaml**. This repository uses 
 
 By reading and running this repository, you can explore:
 
-1. How Hack's two instruction forms map to 16-bit words.
+1. How Hack's two instruction forms map to `hack16` and `hack32` words.
 2. Which parts of `A`, `D`, `PC`, and RAM form the architectural state.
 3. How the C-instruction fields `a`, `comp`, `dest`, and `jump` define one state transition.
 4. Why memory writes and jumps must use the old value of `A` when an instruction also updates `A`.
@@ -64,10 +64,11 @@ Pixi also supplies Python, Pytest, Just, GCC or MinGW GCC, and GMP.
 
 ```sh
 pixi run just hack list
-pixi run just hack run multiply
+pixi run just hack run multiply                    # defaults to hack16
+pixi run just hack run multiply --profile hack32
 ```
 
-`multiply` computes `6 × 7` with repeated addition. Its source is [`isa/hack/programs/multiply.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/multiply.asm):
+The examples below continue with default `hack16`; `hack32` follows the same source flow with 32-bit words and wider hexadecimal state output. `multiply` computes `6 × 7` with repeated addition. Its source is [`isa/hack/programs/multiply.asm`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/programs/multiply.asm):
 
 
 
@@ -93,7 +94,7 @@ HALT
 .assert R2 == 42
 ```
 
-`SET`, `JEQ target, label`, `DEC`, `GOTO`, and `HALT` are **Hack+ pseudoinstructions** supplied by this repository's assembler. The assembler replaces them with standard Hack instructions before resolving labels and encoding machine words. For example:
+`SET`, `JEQ target, label`, `DEC`, `GOTO`, and `HALT` are **Hack+ pseudoinstructions** supplied by this repository's assembler. The assembler replaces them with canonical A/C assembly before resolving labels, then emits machine words for the selected profile. For example:
 
 ```asm
 // SET R0, 6
@@ -148,7 +149,7 @@ pixi run just hack run multiply full
 
 The default `summary` level shows normalized source for every A/C word, marks Hack+ expansion as `[i/n] source => canonical`, and keeps inline assembly comments at the far right. Explicit `full` preserves exact source text and adds more driver-stage and assertion explanations. Use `none` when a bare artifact is more useful than teaching annotations.
 
-The generated `isa/hack/.build/multiply.hack` contains standard 16-bit machine words plus source annotations:
+The default command writes `isa/hack/.build/hack16/asm/multiply/multiply.hack`, containing standard 16-bit machine words plus source annotations. `--profile hack32` writes the 32-bit artifact under `.build/hack32/asm/multiply/` instead:
 
 ```text
 0000000000000110 // ROM[0000] L5 [1/4] SET R0, 6 => @6 // RAM[0] = multiplicand
@@ -157,94 +158,21 @@ The generated `isa/hack/.build/multiply.hack` contains standard 16-bit machine w
 
 This is a useful bridge between the Project 06 encoding tables, assembly source, and Sail's decoder.
 
-## A guided reading of `hack.sail`
+## A guided reading of the profile model
 
-The core model is only about one hundred lines: [`isa/hack/hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail). Read it in the following order.
+The model is intentionally split by responsibility:
 
-### 1. Words and instruction encodings
+1. Start with `model/profiles/hack16.sail`: it defines profile widths and legality, then includes the shared core.
+2. Follow that include into [`model/core.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/model/core.sail) for instruction/exception types, architectural state, the total 64-control ALU, fetch/decode/encode/execute, and `hack_step()`.
+3. Return to the bottom of `hack16.sail` for its scattered A/C mapping clauses, then compare `hack32.sail` and its different C envelope.
+4. Open `projects/hack16.sail_project` and `projects/hack32.sail_project`: each complete build closure names only its one profile entry.
 
-```ocaml
-type word = bits(16)
-type address = bits(15)
-type input_selector = bit
-type alu_control = bits(6)
-type destination_control = bits(3)
-type jump_control = bits(3)
+| Profile | Word/A/D | A instruction | C instruction |
+| --- | ---: | --- | --- |
+| `hack16` | 16 bits | `0` + 15-bit immediate | `111accccccdddjjj` |
+| `hack32` | 32 bits | `0` + 31-bit immediate | `0xFFFF` + `111accccccdddjjj` |
 
-union instruction = {
-  AInstruction : address,
-  CInstruction : (input_selector, alu_control, destination_control, jump_control)
-}
-
-mapping encdec : instruction <-> word = {
-  AInstruction(value) <-> 0b0 @ value,
-  CInstruction(a, comp, dest, jump) <-> 0b111 @ a @ comp @ dest @ jump
-}
-
-union hack_decode_result = {
-  Decoded : instruction,
-  DecodeIllegal : word
-}
-
-function decode_hack(encoded : word) -> hack_decode_result = {
-  match encoded[15] {
-    0b0 => Decoded(encdec(encoded)),
-    0b1 => {
-      match encoded[14 .. 13] {
-        0b11 => Decoded(encdec(encoded)),
-        _ => DecodeIllegal(encoded)
-      }
-    }
-  }
-}
-
-function encode_hack(instr : instruction) -> word = encdec(instr)
-```
-
-Hack has two machine-instruction forms:
-
-| Instruction | Encoding | Effect |
-| --- | --- | --- |
-| A instruction | `0vvvvvvvvvvvvvvv` | Load a 15-bit value into `A` |
-| C instruction | `111accccccdddjjj` | Compute, write destinations, and optionally jump |
-
-Named bit-vector types make each C-instruction field's role visible without changing its raw encoding. The compact `encdec` mapping states the legal A/C encoding in both directions. `decode_hack` adds an explicit legality `match`: valid prefixes use `encdec`, while `100/101/110` preserve the raw word in `DecodeIllegal`. `execute` receives only the decoded `instruction`; it does not perform encoding or decoding.
-
-### 2. Architectural state
-
-```ocaml
-register A : word = 0x0000
-register D : word = 0x0000
-register PC : program_counter = 0b000000000000000
-register RAM : vector(32768, word) = vector_init(32768, 0x0000)
-```
-
-The model has two 16-bit registers, a 15-bit program counter, and `32768 × 16` bits of RAM. An A instruction updates `A` and `PC`. A C instruction reads `D` and either `A` or `RAM[A]`, then decides what to write and whether to jump.
-
-### 3. ALU and jump tables
-
-`alu(comp, x, y)` explicitly matches all official `comp` encodings. The C instruction's `a` bit selects whether `y` is `A` or `RAM[A]`. `should_jump` interprets the three `jump` bits using the ALU result's zero value and sign bit.
-
-These tables are executable counterparts to the tables in the Hack specification: a missing or malformed case is caught by Sail or by the conformance tests rather than hidden in host-language control flow.
-
-### 4. One instruction as a state transition
-
-`execute` is the center of the model. The C-instruction branch saves `old_a` before writing any destination:
-
-```ocaml
-let old_a = A;
-let y = if a == 0b0 then A else RAM[unsigned(ram_address(A))];
-let out = alu(comp, D, y);
-```
-
-Memory writes and jumps then use that saved value:
-
-```ocaml
-RAM[unsigned(ram_address(old_a))] = out
-PC = ram_address(old_a)
-```
-
-This captures a subtle Hack rule. If one C instruction updates `A` while also writing `M` or taking a jump, the memory address and jump target come from the value of `A` at the start of that instruction.
+Both profiles keep a 15-bit `PC`, 32768-word ROM/RAM, and use old `A[14:0]` for RAM writes and jumps. In `hack32`, upper `A` bits still participate in 32-bit ALU computation. The assembler exposes only canonical nand2tetris `comp` mnemonics, while the shared gate-control ALU defines all 64 six-bit controls.
 
 ## Execution pipeline
 
@@ -252,13 +180,13 @@ This captures a subtle Hack rule. If one C instruction updates `A` while also wr
 programs/*.asm
   │  two-pass assembly and Hack+ expansion
   ▼
-.build/<program>.hack
+.build/<profile>/asm/<program>/<program>.hack
   │  reload words, assertions, and HALT metadata
   ▼
-generated .driver.sail + hack.sail
+generated .driver.sail + projects/<profile>.sail_project
   │  Sail type checking and C backend
   ▼
-.build/<program>.exe
+.build/<profile>/asm/<program>/<program>.exe
   │  execute until HALT or a step limit; leaving the loaded image is an error
   ▼
 evaluate source .assert directives
@@ -268,11 +196,11 @@ Reloading the `.hack` artifact is intentional: execution consumes exactly the ma
 
 Important components:
 
-- [`isa/hack/hack.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/hack.sail): executable Hack ISA semantics;
+- `isa/hack/model/` and `projects/*.sail_project`: shared semantics and profile compositions;
 - `isa/hack/tools/assembler.py`: two-pass assembler, Hack+ expansion, and annotated machine code;
 - `isa/hack/tools/executor.py`: Sail driver generation, C-backend invocation, and execution;
 - `isa/hack/programs/*.asm`: examples and end-to-end regressions;
-- [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail): direct ALU, jump, destination, and transition checks;
+- `isa/hack/tests/sail/<profile>/conformance.sail`: direct profile encoding, ALU, jump, destination, and transition checks;
 - `isa/hack/tests/`: Python tests for the assembler and executor.
 
 For the complete assertion, `max_steps`, pseudoinstruction, and annotated-file syntax, see the [Hack package reference](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/README.md).
@@ -281,16 +209,17 @@ For the complete assertion, `max_steps`, pseudoinstruction, and annotated-file s
 
 ### Compare source with machine encoding
 
-1. Read `encdec`, `decode_hack`, and `encode_hack` in `hack.sail`.
+1. Read the selected profile's mapping clauses, use `encdec(instruction)` directly for encoding, then follow the include to the legality-checking `decode_hack` in `model/core.sail`.
 2. Write or modify a small standard Hack assembly program.
 3. Run `pixi run just hack assemble <name>`.
 4. Compare each generated word with the Project 06 tables.
 
 ### Add a Sail-level ALU check
 
-Add an assertion to `test_alu()` in [`isa/hack/tests/isa_conformance.sail`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tests/isa_conformance.sail), then run:
+Add an assertion to the relevant `tests/sail/<profile>/conformance.sail`, then run the narrow check followed by the complete test:
 
 ```sh
+pixi run just hack check --profile hack32
 pixi run just hack test
 ```
 
@@ -314,7 +243,7 @@ The model deliberately stays at the ISA level:
 - Hack+ is assembler convenience syntax, not an ISA extension.
 - Execution uses Sail's C backend and makes no claim that the model has been formally proved correct.
 
-For learning how gates compose into a CPU, start with NandGame or nand2tetris Projects 01–05. For learning how to specify exactly what each CPU instruction does, start with `hack.sail` here.
+For learning how gates compose into a CPU, start with NandGame or nand2tetris Projects 01–05. For learning how to specify exactly what each CPU instruction does, start with one profile entry, follow its include into `model/core.sail`, then return to its mapping clauses.
 
 ## Further resources
 

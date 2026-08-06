@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
 
+from isa.hack.tools.profiles import DEFAULT_PROFILE, Profile, get_profile
 from tools.isa_support.directives import (
     AssertionDirective,
     DescriptionDirective,
@@ -273,6 +274,7 @@ class MachineWord:
 
 @dataclass(frozen=True)
 class AssemblyResult:
+    profile: Profile
     records: tuple[MachineWord, ...]
     metadata: AssemblyMetadata
 
@@ -373,29 +375,39 @@ def parse_python_int(token: str, line: int) -> int:
 
 
 def parse_expected_value(
-    token: str, line: int, target: str, operator: str, mode: str
+    token: str,
+    line: int,
+    target: str,
+    operator: str,
+    mode: str,
+    profile: Profile,
 ) -> int:
     value = parse_python_int(token, line)
     if target == "PC":
-        if not 0 <= value <= 32767:
+        if not 0 <= value < (1 << profile.pc_bits):
             raise AssemblyError(line, "PC assertion value must be in 0..32767")
         return value
+    signed_minimum = -(1 << (profile.word_bits - 1))
+    signed_maximum = (1 << (profile.word_bits - 1)) - 1
+    unsigned_maximum = profile.word_mask
     if operator in EQUALITY_OPERATORS:
-        if not -32768 <= value <= 65535:
+        if not signed_minimum <= value <= unsigned_maximum:
             raise AssemblyError(
                 line,
-                "bit-exact assertion value must fit a signed or unsigned 16-bit word",
+                f"bit-exact assertion value must fit a signed or unsigned {profile.word_bits}-bit word",
             )
-        return value & 0xFFFF
+        return value & profile.word_mask
     if mode == "signed":
-        if not -32768 <= value <= 32767:
+        if not signed_minimum <= value <= signed_maximum:
             raise AssemblyError(
-                line, "signed relational assertion value must be in -32768..32767"
+                line,
+                f"signed relational assertion value must be in {signed_minimum}..{signed_maximum}",
             )
         return value
-    if not 0 <= value <= 65535:
+    if not 0 <= value <= unsigned_maximum:
         raise AssemblyError(
-            line, "unsigned relational assertion value must be in 0..65535"
+            line,
+            f"unsigned relational assertion value must be in 0..{unsigned_maximum}",
         )
     return value
 
@@ -414,8 +426,6 @@ def canonical_assertion_target(target: str, line: int) -> str:
 
 def validate_a_operand(operand: str, line: int) -> None:
     if DECIMAL_RE.fullmatch(operand) is not None:
-        if int(operand) >= 32768:
-            raise AssemblyError(line, "A-instruction value must be in 0..32767")
         return
     if SYMBOL_RE.fullmatch(operand) is None:
         raise AssemblyError(line, f"invalid Hack symbol {operand!r}")
@@ -440,7 +450,9 @@ def _source_identity(path: Path) -> str:
         return path.name
 
 
-def _assertion_from_directive(statement: AssertionDirective) -> Assertion:
+def _assertion_from_directive(
+    statement: AssertionDirective, profile: Profile
+) -> Assertion:
     target = canonical_assertion_target(statement.target, statement.line)
     if target == "PC" and statement.mode == "signed":
         raise AssemblyError(
@@ -453,6 +465,7 @@ def _assertion_from_directive(statement: AssertionDirective) -> Assertion:
         target,
         statement.operator,
         statement.mode,
+        profile,
     )
     return Assertion(
         target,
@@ -470,8 +483,13 @@ def _expanded_instruction(
     return parser._parse_instruction(text, source, PseudoExpansion(text, index, count))
 
 
+def _validate_profile_operand(operand: str, line: int, maximum: int, role: str) -> None:
+    if DECIMAL_RE.fullmatch(operand) is not None and int(operand) > maximum:
+        raise AssemblyError(line, f"{role} must be in 0..{maximum}")
+
+
 def expand(
-    statements: list[Statement],
+    statements: list[Statement], profile: Profile
 ) -> tuple[
     list[Instruction | Label],
     list[AssertionDirective],
@@ -497,7 +515,41 @@ def expand(
         else:
             name = statement.name
             args = statement.arguments
+            address_operands = {
+                "SET": args[:1],
+                "MOV": args,
+                "CLR": args,
+                "INC": args,
+                "DEC": args,
+                "ADD": args,
+                "SUB": args,
+                "AND": args,
+                "OR": args,
+                "NEG": args,
+                "NOT": args,
+                "GOTO": args,
+                "JNZ": args,
+                "JNE": args,
+                "JGT": args,
+                "JEQ": args,
+                "JGE": args,
+                "JLT": args,
+                "JLE": args,
+            }.get(name, ())
+            for operand in address_operands:
+                _validate_profile_operand(
+                    operand,
+                    statement.source.line,
+                    profile.ram_words - 1,
+                    "Hack memory/jump address",
+                )
             if name == "SET":
+                _validate_profile_operand(
+                    args[1],
+                    statement.source.line,
+                    profile.a_immediate_max,
+                    f"{profile.name} A-instruction value",
+                )
                 expanded = [f"@{args[1]}", "D=A", f"@{args[0]}", "M=D"]
             elif name == "MOV":
                 expanded = [f"@{args[1]}", "D=M", f"@{args[0]}", "M=D"]
@@ -543,9 +595,13 @@ def assemble_text(
     *,
     source: str = "<memory>",
     source_kind: str = "asm",
+    profile: str = DEFAULT_PROFILE,
 ) -> AssemblyResult:
+    selected_profile = get_profile(profile)
     statements = parse(text)
-    code, assertion_directives, max_steps_directive, halt_labels = expand(statements)
+    code, assertion_directives, max_steps_directive, halt_labels = expand(
+        statements, selected_profile
+    )
     symbols = SYMBOLS.copy()
     instructions: list[Instruction] = []
     address = 0
@@ -560,9 +616,10 @@ def assemble_text(
         else:
             instructions.append(statement)
             address += 1
-            if address > 32768:
+            if address > selected_profile.rom_words:
                 raise AssemblyError(
-                    statement.source.line, "program exceeds the 32768-word Hack ROM"
+                    statement.source.line,
+                    f"program exceeds the {selected_profile.rom_words}-word Hack ROM",
                 )
 
     next_variable = 16
@@ -574,7 +631,7 @@ def assemble_text(
                 value = int(operand)
             else:
                 if operand not in symbols:
-                    if next_variable >= 32768:
+                    if next_variable >= selected_profile.ram_words:
                         raise AssemblyError(
                             instruction.source.line,
                             "variable allocation exceeds Hack address space",
@@ -582,21 +639,25 @@ def assemble_text(
                     symbols[operand] = next_variable
                     next_variable += 1
                 value = symbols[operand]
-            if not 0 <= value < 32768:
+            if not 0 <= value <= selected_profile.a_immediate_max:
                 raise AssemblyError(
-                    instruction.source.line, "A-instruction value must be in 0..32767"
+                    instruction.source.line,
+                    f"{selected_profile.name} A-instruction value must be in "
+                    f"0..{selected_profile.a_immediate_max}",
                 )
             word = value
         else:
-            word = int(
+            canonical = int(
                 f"111{COMP[instruction.comp]}{DEST[instruction.dest]}{JUMP[instruction.jump]}",
                 2,
             )
+            word = selected_profile.encode_c(canonical)
         records.append(MachineWord(word, instruction.source, instruction.expansion))
 
     halt_addresses = tuple(symbols[label] for _, label in halt_labels)
     assertions = tuple(
-        _assertion_from_directive(statement) for statement in assertion_directives
+        _assertion_from_directive(statement, selected_profile)
+        for statement in assertion_directives
     )
     description = next(
         (
@@ -619,12 +680,18 @@ def assemble_text(
         source_kind,
         source.replace("\\", "/"),
     )
-    return AssemblyResult(tuple(records), metadata)
+    return AssemblyResult(selected_profile, tuple(records), metadata)
 
 
-def assemble(source: Path, *, source_kind: str = "asm") -> AssemblyResult:
+def assemble(
+    source: Path,
+    *,
+    source_kind: str = "asm",
+    profile: str = DEFAULT_PROFILE,
+) -> AssemblyResult:
     return assemble_text(
         source.read_text(encoding="utf-8"),
         source=_source_identity(source),
         source_kind=source_kind,
+        profile=profile,
     )

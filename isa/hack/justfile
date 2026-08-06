@@ -4,9 +4,9 @@ set default-list := true
 list:
     python tools/workflow.py list
 
-# Fast standalone type-check of the Hack Sail model.
-check:
-    python tools/workflow.py check
+# Type-check both Hack Sail profiles, or pass --profile hack16/hack32.
+check *options:
+    python tools/workflow.py check {{ options }}
 
 # Assemble a program; optional metadata overrides follow the comment level.
 assemble program comments="summary" *options:

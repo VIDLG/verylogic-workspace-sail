@@ -2,7 +2,7 @@
 
 [← Hack ISA](/hack/isa) · [Common teaching contract](/reference/teaching-contract) · [中文](/zh/hack/assembler) · [Execution and tests →](/hack/execution)
 
-This guide follows [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) and [`artifact.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/artifact.py). It explains how source becomes 16-bit Hack machine code, then crosses a strict persisted-artifact boundary. Shared directive and manifest rules are defined by the [common teaching contract](/reference/teaching-contract). `assembler.py` remains a pure library; `assembler_cli.py` is the thin CLI boundary that handles arguments and publication.
+This guide follows [`isa/hack/tools/assembler.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/assembler.py) and [`artifact.py`](https://github.com/VIDLG/verylogic-workspace-sail/blob/main/isa/hack/tools/artifact.py). It explains how source becomes profile-specific Hack machine code, then crosses a strict persisted-artifact boundary. Commands default to 16-bit `hack16`; `--profile hack32` selects 32-bit words. Shared directive and manifest rules are defined by the [common teaching contract](/reference/teaching-contract). `assembler.py` remains a pure library; `assembler_cli.py` is the thin CLI boundary that handles arguments and publication.
 
 ## The assembler's responsibility
 
@@ -104,7 +104,7 @@ Dot directives come first so an invalid `.assert` or `.description` gets a direc
 
 An A operand is either:
 
-- a decimal value from `0` through `32767`;
+- a decimal value in the selected A-immediate range: `0..32767` for `hack16`, `0..2147483647` for `hack32`;
 - a Hack symbol matching `[A-Za-z_.$:][A-Za-z0-9_.$:]*`.
 
 The parser retains symbolic operands as strings because label addresses are not known yet and variable allocation must not happen early.
@@ -213,14 +213,15 @@ For an A instruction:
 1. use a decimal operand directly;
 2. look up a known symbol;
 3. allocate an unknown variable consecutively from RAM address `16`;
-4. place the value in the low 15 bits with a leading zero.
+4. place the value after a leading zero in the selected profile: 15 immediate bits for `hack16`, 31 for `hack32`.
 
 Later uses of the same variable reuse its first allocation.
 
-A C instruction uses:
+A C instruction uses the same canonical fields in both profiles:
 
 ```text
-111 + COMP[comp] + DEST[dest] + JUMP[jump]
+hack16: 111 + COMP[comp] + DEST[dest] + JUMP[jump]
+hack32: 0xFFFF + 111 + COMP[comp] + DEST[dest] + JUMP[jump]
 ```
 
 For example, `D=M+1;JGT` gives:
@@ -271,7 +272,7 @@ That separation is intentional: Python translates; Sail executes and judges arch
 
 ### Opening structured manifest block
 
-`write_hack()` delegates to the shared renderer. At `summary` and `full`, it writes one indented canonical S-expression as a contiguous block at the start of the file, with every line prefixed by `//% `. At `none`, it writes the same form as one compact prefixed line. The schema is `verylogic.annotated-image`; the public envelope contains runtime `max_steps`, assertions, completion, and ISA metadata. Hack direct assembly omits empty frontend `provenance`. Hack-specific validation fixes `hack/standard`, source kind `asm`, 16-bit words, memory dimensions, and lowered-self-loop completion. Runtime values carry `cli`, `source`, or `default` origins.
+`write_hack()` delegates to the shared renderer. At `summary` and `full`, it writes one indented canonical S-expression as a contiguous block at the start of the file, with every line prefixed by `//% `. At `none`, it writes the same form as one compact prefixed line. The schema is `verylogic.annotated-image`; the public envelope contains runtime `max_steps`, assertions, completion, and ISA metadata. Hack direct assembly omits empty frontend `provenance`. Hack-specific validation fixes `isa=hack`, `profile=hack16|hack32`, source kind `asm`, profile word width, memory dimensions, and lowered-self-loop completion; `standard` is never a valid profile. Runtime values carry `cli`, `source`, or `default` origins.
 
 ### Source-mapped machine words
 
@@ -280,7 +281,7 @@ That separation is intentional: Python translates; Sail executes and judges arch
 1110110000010000 // ROM[0001] L1 [2/4] SET R0, 6 => D=A
 ```
 
-The line still begins with a normal 16-bit Hack word. Simple tools can ignore comments, while this project's executor can reconstruct the full execution contract.
+This default example begins with a normal 16-bit `hack16` word. A `hack32` line begins with 32 binary digits and is not an ordinary nand2tetris `.hack` word. This project's profile-aware executor reconstructs the complete contract from the manifest and annotations.
 
 ### Teaching detail levels
 
@@ -313,11 +314,11 @@ The loader here is `isa/hack/tools/artifact.py::load_hack()`. It verifies:
 - exactly one contiguous manifest block appears at the start of the file, uses the comment-level-specific formatting, and has the exact common version-1 key set;
 - ISA/profile, source identity, description, comment level, runtime value/origin, assertions, completion, and `isa_metadata` have exact types and legal values;
 - equality assertions use `bits` mode with no wrapper, while ordered assertions use explicit `signed` or `unsigned` mode;
-- each machine word is exactly 16 binary digits and comment presence matches the manifest level;
+- each machine word has exactly the selected profile width (16 or 32 binary digits), and comment presence matches the manifest level;
 - each completion address points at an `@address; 0;JMP` self-loop;
 - ROM has at most 32768 words.
 
-`load_hack()` accepts only the strict annotated format and rejects a file without an opening manifest block. If raw nand2tetris `.hack` interoperability is added later, it must be a separate explicit frontend because a raw image cannot truthfully supply descriptions, assertions, watchdog origin, or completion metadata.
+`load_hack()` accepts only the strict annotated format and rejects a file without an opening manifest block or with a profile mismatch. Raw nand2tetris interoperability requires a separate explicit frontend because a raw image cannot truthfully supply descriptions, assertions, watchdog origin, or completion metadata. `hack32` additionally has 32-bit words and is not ordinary nand2tetris `.hack` compatibility.
 
 ## Error design
 
@@ -415,12 +416,12 @@ Only then modify `PSEUDO_NAMES`, parsing patterns, and `expand()`.
 pixi run just hack assemble multiply
 ```
 
-Open `isa/hack/.build/multiply.hack` and correlate:
+Open `isa/hack/.build/hack16/asm/multiply/multiply.hack` (or `.build/hack32/asm/multiply/multiply.hack` after assembling with `--profile hack32`)
 
 - each source pseudoinstruction;
 - its standard expansion;
 - ROM address;
-- 16-bit machine word;
+- profile-width machine word;
 - file-level metadata.
 
 Continue with [Execution and test workflow](/hack/execution) to follow this `.hack` artifact into a running program.
